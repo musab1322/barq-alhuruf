@@ -21,8 +21,8 @@ function aiConfig() {
     return {
       key: process.env.GROQ_API_KEY,
       base: process.env.AI_BASE_URL || "https://api.groq.com/openai/v1",
-      model: process.env.AI_MODEL || "llama-3.3-70b-versatile",
-      fallbacks: ["llama-3.1-8b-instant", "openai/gpt-oss-120b"],
+      model: process.env.AI_MODEL || "openai/gpt-oss-120b",
+      fallbacks: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
     };
   }
   if (process.env.OPENAI_API_KEY) {
