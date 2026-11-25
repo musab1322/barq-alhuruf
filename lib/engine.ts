@@ -42,7 +42,7 @@ export class Engine {
 
   private net: Transport | null = null;
   private listeners = new Set<Listener>();
-  private drafts: Record<number, { main: string[]; extra: string[] }> = {};
+  private drafts: Record<string, { main: string[]; extra: string[] }> = {};
   private collected: Record<string, { main: string[]; extra: string[] }> = {};
   private finishPayload: Record<string, { main: string[]; extra: string[] }> = {};
   private collectUntil = 0;
@@ -101,19 +101,27 @@ export class Engine {
     if (!this.S || !this.S.rounds.length) return null;
     return this.S.rounds[this.S.rounds.length - 1];
   }
-  draft(no: number) {
-    if (!this.drafts[no]) {
+  /** مسودة إجاباتي لجولة معينة (مفتاحها معرّف الجولة الفريد، حتى ما ترجع إجابات لعبة سابقة) */
+  draft(r: { id?: string; no: number }) {
+    const key = r.id || `n${r.no}`;
+    if (!this.drafts[key]) {
       let saved: { main: string[]; extra: string[] } | null = null;
       try {
-        saved = JSON.parse(sessionStorage.getItem(`insan_draft_${this.room}_${no}`) || "null");
+        saved = JSON.parse(sessionStorage.getItem(`insan_draft_${this.room}_${key}`) || "null");
       } catch {}
-      this.drafts[no] = saved || { main: CATEGORIES.map(() => ""), extra: CATEGORIES.map(() => "") };
+      this.drafts[key] = saved || { main: CATEGORIES.map(() => ""), extra: CATEGORIES.map(() => "") };
     }
-    return this.drafts[no];
+    return this.drafts[key];
   }
-  private saveDraft(no: number) {
+  private saveDraft(r: { id?: string; no: number }) {
+    const key = r.id || `n${r.no}`;
     try {
-      sessionStorage.setItem(`insan_draft_${this.room}_${no}`, JSON.stringify(this.draft(no)));
+      // نحذف مسودات الجولات القديمة ونحفظ الحالية فقط
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith("insan_draft_") && k !== `insan_draft_${this.room}_${key}`) sessionStorage.removeItem(k);
+      }
+      sessionStorage.setItem(`insan_draft_${this.room}_${key}`, JSON.stringify(this.draft(r)));
     } catch {}
   }
   private send(msg: Msg) {
@@ -124,6 +132,9 @@ export class Engine {
     this.S.v++;
     this.S.hostNow = Date.now();
     this.send({ t: "state", d: this.S });
+    try {
+      sessionStorage.setItem(`insan_state_${this.room}`, JSON.stringify(this.S));
+    } catch {}
     this.afterState();
   }
 
@@ -156,6 +167,18 @@ export class Engine {
     this.S = null;
     this.joinFailed = false;
     this.kicked = false;
+    // كنت المضيف وحدّثت الصفحة: نسترجع حالة الغرفة المحفوظة ونكمل
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`insan_state_${code}`) || "null") as GameState | null;
+      if (saved && saved.hostId === this.myId) {
+        this.S = saved;
+        this.offset = 0;
+        if (saved.phase === "closing") this.collectUntil = Date.now() + COLLECT_MS;
+        this.open(code, local, true);
+        setTimeout(() => this.send({ t: "drafts" }), 600);
+        return;
+      }
+    } catch {}
     this.open(code, local, false);
   }
 
@@ -405,8 +428,8 @@ export class Engine {
   setDraft(field: "main" | "extra", i: number, value: string) {
     const r = this.currentRound();
     if (!r || this.S?.phase !== "playing") return;
-    this.draft(r.no)[field][i] = value.slice(0, 40);
-    this.saveDraft(r.no);
+    this.draft(r)[field][i] = value.slice(0, 40);
+    this.saveDraft(r);
     this.sendDraft(false);
   }
 
@@ -415,7 +438,7 @@ export class Engine {
     if (!r) return;
     if (this.draftTimer) clearTimeout(this.draftTimer);
     const go = () => {
-      const d = this.draft(r.no);
+      const d = this.draft(r);
       if (this.isHost()) {
         if (!this.finishPayload[this.myId]) this.collected[this.myId] = d;
       } else this.send({ t: "draft", d: { round: r.no, main: d.main, extra: d.extra } });
@@ -431,7 +454,7 @@ export class Engine {
     if (!r || !S || S.phase !== "playing") return ["الجولة انتهت"];
     if (this.now() < r.startedAt) return ["انتظر لحظة، الجولة ما بدأت"];
     const elapsedMs = Math.max(0, Math.round(this.now() - r.startedAt));
-    const d = this.draft(r.no);
+    const d = this.draft(r);
     const res = await validate(r.letter, d.main.map((answer, cat) => ({ cat, answer })));
     if (res.aiEnabled != null) this.aiEnabled = res.aiEnabled;
     const errors = res.results.map((x) => (x.ok ? "" : x.reason || "إجابة غير صحيحة")).filter(Boolean);
@@ -474,6 +497,7 @@ export class Engine {
     const participants = S.order.filter((id) => this.online.includes(id));
     const startedAt = Date.now() + 1500; // مهلة صغيرة حتى تصل الرسالة للجميع
     S.rounds.push({
+      id: rid(),
       no: S.rounds.length + 1,
       letter,
       startedAt,
@@ -532,7 +556,7 @@ export class Engine {
     const clean = (a?: string[]) => CATEGORIES.map((_, i) => String(a?.[i] || "").trim().slice(0, 40));
     for (const pid of r.participants) {
       const fp = this.finishPayload[pid];
-      const src = fp || this.collected[pid] || (pid === this.myId ? this.draft(r.no) : undefined);
+      const src = fp || this.collected[pid] || (pid === this.myId ? this.draft(r) : undefined);
       answers[pid] = { main: clean(src?.main), extra: clean(src?.extra) };
       if (fp) checks[pid] = CATEGORIES.map(() => ({ ok: true }));
       else {

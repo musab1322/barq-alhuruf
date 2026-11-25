@@ -429,14 +429,14 @@ function Stopwatch({ e, r, frozen }: { e: Engine; r: RoundRecord; frozen?: numbe
 }
 
 function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
-  const d = e.draft(r.no);
+  const d = e.draft(r);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [showExtra, setShowExtra] = useState<Record<number, boolean>>({});
   const mine = r.finishers.find((f) => f.id === e.myId);
   const inRound = r.participants.includes(e.myId);
   const locked = !!mine || busy;
-  useEffect(() => setErrors([]), [r.no]);
+  useEffect(() => setErrors([]), [r.id]);
 
   const onFinish = async () => {
     setBusy(true);
@@ -477,7 +477,7 @@ function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
         <div className={`${card} mt-4 space-y-4`}>
           {CATEGORIES.map((c, i) => (
             <CategoryField
-              key={`${r.no}-${i}`}
+              key={`${r.id}-${i}`}
               i={i}
               letter={r.letter}
               cat={c}

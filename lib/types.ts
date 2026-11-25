@@ -16,6 +16,7 @@ export interface Check {
 }
 
 export interface RoundRecord {
+  id: string; // معرّف فريد للجولة
   no: number;
   letter: string;
   startedAt: number; // بساعة المضيف
