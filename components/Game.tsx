@@ -593,7 +593,7 @@ function Results({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
           <h2 className="text-2xl font-black">
             نتائج الجولة {r.no} من {S.settings.rounds}
           </h2>
-          <p className="text-sm text-slate-500">{r.ai ? "🤖 تم التحقق من التصنيفات بالذكاء الاصطناعي" : "تم التحقق من الحرف فقط (التحقق الذكي غير مفعّل)"}</p>
+          <p className="text-sm text-slate-500">{r.ai ? "🤖 تم التحقق من التصنيفات بالذكاء الاصطناعي" : "تم التحقق بالقاموس المدمج (أضف مفتاح GROQ_API_KEY لتحقق أذكى). المضيف يقدر يعتمد أي كلمة صحيحة ما عرفناها."}</p>
         </div>
       </div>
 

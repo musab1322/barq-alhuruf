@@ -1,16 +1,18 @@
-import { CATEGORIES, normalize, startsWithLetter } from "@/lib/arabic";
+import { CATEGORIES, normalize } from "@/lib/arabic";
+import { inDictionary } from "@/lib/dictionary";
+import { ruleCheck, unknownResult, type Result } from "@/lib/validate";
 
 /**
  * التحقق من الإجابات.
  * الطلب: { letter, items: [{ cat: 0..4, answer }] }
- * الرد:  { results: [{ ok, reason? }], ai: boolean }
- * 1) فحص الحرف محلياً (سريع ودقيق).
- * 2) فحص التصنيف بالذكاء الاصطناعي إذا وُجد GROQ_API_KEY أو OPENAI_API_KEY.
- *    إذا فشل الاتصال بالذكاء الاصطناعي تُقبل الإجابات (حتى لا تتعطل اللعبة).
+ * الرد:  { results: [{ ok, reason? }], ai: boolean, aiEnabled: boolean }
+ * 1) قواعد ثابتة: فاضية، حرف واحد، تكرار حرف، أحرف غير عربية، لا تبدأ بالحرف.
+ * 2) القاموس المدمج: إذا الكلمة معروفة في تصنيفها تُقبل فوراً.
+ * 3) الذكاء الاصطناعي (إذا وُجد GROQ_API_KEY أو OPENAI_API_KEY) يحكم على الكلمات غير الموجودة في القاموس.
+ *    بدونه، الكلمة غير المعروفة تُعتبر خطأ (والمضيف يقدر يعتمدها يدوياً من شاشة النتائج).
  */
 
 type Item = { cat: number; answer: string };
-type Result = { ok: boolean; reason?: string };
 
 const MAX_ITEMS = 60;
 
@@ -32,19 +34,19 @@ function aiConfig() {
   return null;
 }
 
-// ذاكرة مؤقتة بسيطة حتى لا نسأل عن نفس الكلمة مرتين
+// ذاكرة مؤقتة حتى لا نسأل عن نفس الكلمة مرتين
 const cache = new Map<string, Result>();
 
-async function aiCheck(items: { i: number; cat: number; answer: string }[]): Promise<Map<number, Result> | null> {
+async function aiCheck(items: { i: number; cat: number; answer: string }[]): Promise<Map<number, { ok: boolean; reason?: string }> | null> {
   const cfg = aiConfig();
   if (!cfg || !items.length) return null;
   const list = items.map((x) => ({ i: x.i, category: CATEGORIES[x.cat].name, hint: CATEGORIES[x.cat].hint, word: x.answer }));
   const system =
-    "أنت حكم في لعبة (إنسان حيوان نبات جماد بلاد). لكل كلمة قرر هل تنتمي فعلاً للتصنيف المطلوب. " +
-    "إنسان = اسم علم لشخص (ذكر أو أنثى) من أي لغة أو ثقافة. حيوان = أي كائن حي من الحيوانات أو الطيور أو الأسماك أو الحشرات. " +
-    "نبات = أي نبات أو شجرة أو زهرة أو فاكهة أو خضار أو عشب. جماد = أي شيء مادي غير حي (أدوات، أثاث، مواد، أجهزة...). " +
-    "بلاد = دولة أو مدينة أو منطقة جغرافية معروفة. كن متسامحاً مع الأخطاء الإملائية البسيطة واللهجات والكلمات المعرّبة، " +
-    "وارفض فقط الكلمات التي لا تنتمي للتصنيف بوضوح أو الكلمات غير الموجودة. " +
+    "أنت حكم صارم وعادل في لعبة (إنسان حيوان نبات جماد بلاد). لكل كلمة قرر هل هي كلمة حقيقية تنتمي فعلاً للتصنيف المطلوب. " +
+    "إنسان = اسم علم لشخص (ذكر أو أنثى) من أي لغة أو ثقافة. حيوان = أي حيوان أو طائر أو سمكة أو حشرة. " +
+    "نبات = أي نبات أو شجرة أو زهرة أو فاكهة أو خضار أو عشب أو حبوب. جماد = أي شيء مادي غير حي (أدوات، أثاث، مواد، أجهزة، ملابس...). " +
+    "بلاد = دولة أو مدينة أو منطقة جغرافية معروفة. تسامح مع الأخطاء الإملائية البسيطة واللهجات الخليجية والكلمات المعرّبة. " +
+    "ارفض الكلمات العشوائية أو المخترعة أو غير الموجودة، والكلمات الموجودة لكن في تصنيف آخر (مثلاً: موز في خانة حيوان). " +
     'أجب بـ JSON فقط بالشكل: {"results":[{"i":0,"ok":true,"reason":""}]} حيث reason جملة عربية قصيرة جداً عند الرفض.';
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 9000);
@@ -69,9 +71,9 @@ async function aiCheck(items: { i: number; cat: number; answer: string }[]): Pro
     }
     const data = await res.json();
     const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
-    const out = new Map<number, Result>();
+    const out = new Map<number, { ok: boolean; reason?: string }>();
     for (const r of parsed.results || []) {
-      if (typeof r?.i === "number") out.set(r.i, { ok: r.ok !== false, reason: r.ok === false ? String(r.reason || "") : undefined });
+      if (typeof r?.i === "number") out.set(r.i, { ok: r.ok === true, reason: r.ok === true ? undefined : String(r.reason || "") });
     }
     return out;
   } catch (e) {
@@ -99,37 +101,38 @@ export async function POST(req: Request) {
   const results: Result[] = [];
   const pending: { i: number; cat: number; answer: string }[] = [];
   items.forEach((it, i) => {
-    const catName = CATEGORIES[it.cat].name;
-    if (!it.answer) results[i] = { ok: false, reason: `خانة ${catName} فاضية` };
-    else if (!startsWithLetter(it.answer, letter)) results[i] = { ok: false, reason: `الكلمة في خانة ${catName} لا تبدأ بحرف ${letter}` };
+    const rule = ruleCheck(it.cat, it.answer, letter);
+    if (rule) results[i] = rule;
+    else if (inDictionary(it.cat, it.answer)) results[i] = { ok: true, source: "dict" };
     else {
-      const ck = `${it.cat}|${normalize(it.answer)}`;
-      const hit = cache.get(ck);
+      const hit = cache.get(`${it.cat}|${normalize(it.answer)}`);
       if (hit) results[i] = hit;
       else {
-        results[i] = { ok: true };
+        results[i] = unknownResult(it.cat, it.answer);
         pending.push({ i, ...it });
       }
     }
   });
 
   const cfg = aiConfig();
-  let ai = false;
+  let ai = !!cfg;
   if (pending.length && cfg) {
     const out = await aiCheck(pending);
-    if (out) {
-      ai = true;
+    if (!out) ai = false;
+    else {
       pending.forEach((p) => {
         const r = out.get(p.i);
         if (!r) return;
         const catName = CATEGORIES[p.cat].name;
-        const res: Result = r.ok ? { ok: true } : { ok: false, reason: `«${p.answer}» ليست ${catName}${r.reason ? ": " + r.reason : ""}` };
+        const res: Result = r.ok
+          ? { ok: true, source: "ai" }
+          : { ok: false, source: "ai", reason: `«${p.answer}» ليست ${catName}${r.reason ? ": " + r.reason : ""}` };
         results[p.i] = res;
         if (cache.size > 5000) cache.clear();
         cache.set(`${p.cat}|${normalize(p.answer)}`, res);
       });
     }
-  } else if (cfg) ai = true;
+  }
 
   return Response.json({ results, ai, aiEnabled: !!cfg });
 }

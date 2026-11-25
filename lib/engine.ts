@@ -1,5 +1,6 @@
 "use client";
 import { ALL_LETTERS, CATEGORIES, HARD_LETTERS, startsWithLetter } from "./arabic";
+import { offlineCheck } from "./validate";
 import { neededFinishers } from "./scoring";
 import { sounds } from "./sound";
 import { connect, type Transport } from "./transport";
@@ -531,17 +532,11 @@ async function validate(letter: string, items: { cat: number; answer: string }[]
     if (!res.ok) throw new Error(String(res.status));
     return (await res.json()) as { results: Check[]; ai: boolean; aiEnabled?: boolean };
   } catch {
-    // بدون خادم: فحص الحرف فقط
+    // بدون خادم: القواعد والقاموس
     return {
       ai: false,
       aiEnabled: undefined,
-      results: items.map(({ cat, answer }) =>
-        !answer
-          ? { ok: false, reason: `خانة ${CATEGORIES[cat].name} فاضية` }
-          : startsWithLetter(answer, letter)
-            ? { ok: true }
-            : { ok: false, reason: `الكلمة في خانة ${CATEGORIES[cat].name} لا تبدأ بحرف ${letter}` }
-      ),
+      results: items.map(({ cat, answer }) => offlineCheck(cat, answer, letter)),
     };
   }
 }
