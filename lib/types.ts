@@ -53,4 +53,5 @@ export type Msg =
   | { t: "hello"; d: { name: string } }
   | { t: "finish"; d: { round: number; elapsedMs: number; main: string[]; extra: string[] } }
   | { t: "draft"; d: { round: number; main: string[]; extra: string[] } }
-  | { t: "override"; d: { round: number; key: string } };
+  | { t: "sync" }
+  | { t: "drafts" };

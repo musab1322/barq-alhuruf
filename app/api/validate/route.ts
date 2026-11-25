@@ -136,3 +136,22 @@ export async function POST(req: Request) {
 
   return Response.json({ results, ai, aiEnabled: !!cfg });
 }
+
+// حالة التحقق الذكي: GET /api/validate  (أضف ?test=1 لتجربة فعلية على كلمتين)
+let selfTest: { at: number; ok: boolean; detail: string } | null = null;
+
+export async function GET(req: Request) {
+  const cfg = aiConfig();
+  const provider = process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : null;
+  const wantTest = new URL(req.url).searchParams.has("test");
+  if (cfg && wantTest && (!selfTest || Date.now() - selfTest.at > 10 * 60 * 1000)) {
+    const out = await aiCheck([
+      { i: 0, cat: 1, answer: "موز" },
+      { i: 1, cat: 1, answer: "ماعز" },
+    ]);
+    selfTest = out
+      ? { at: Date.now(), ok: out.get(0)?.ok === false && out.get(1)?.ok === true, detail: `موز كحيوان=${out.get(0)?.ok} ، ماعز كحيوان=${out.get(1)?.ok}` }
+      : { at: Date.now(), ok: false, detail: "فشل الاتصال بخدمة الذكاء الاصطناعي (تأكد من المفتاح)" };
+  }
+  return Response.json({ aiEnabled: !!cfg, provider, model: cfg?.model ?? null, selfTest });
+}

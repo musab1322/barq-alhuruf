@@ -17,6 +17,7 @@ import {
   Share2,
   Sparkles,
   Timer,
+  Tv,
   Trophy,
   Users,
   X,
@@ -29,6 +30,7 @@ import { Engine } from "@/lib/engine";
 import { fmtTime, scoreRound, standings } from "@/lib/scoring";
 import { sounds } from "@/lib/sound";
 import type { GameState, RoundRecord } from "@/lib/types";
+import Display from "./Display";
 
 // ---------- الجذر ----------
 export default function Game() {
@@ -38,6 +40,12 @@ export default function Game() {
     const e = new Engine();
     setEngine(e);
     const un = e.subscribe(force);
+    // شاشة العرض، أو الرجوع التلقائي لنفس الغرفة بعد تحديث الصفحة
+    const p = new URLSearchParams(location.search);
+    const r = p.get("r");
+    const local = p.has("local");
+    if (r && p.has("screen")) e.watch(r, local);
+    else if (r && e.myName && e.savedRoom() === r) e.join(r, local);
     return () => {
       un();
     };
@@ -60,6 +68,20 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function Screen({ e }: { e: Engine }) {
+  if (e.viewer) return <Display e={e} />;
+  if (e.kicked)
+    return (
+      <>
+        <Logo />
+        <div className={`${card} text-center`}>
+          <h2 className="text-xl font-black">دخلت بنفس الاسم من جهاز ثاني 📱</h2>
+          <p className="mt-2 text-slate-500">لاعبك ونقاطك انتقلت للجهاز الثاني.</p>
+          <button className={`${btnMain} mt-4`} onClick={() => e.leave()}>
+            الرئيسية
+          </button>
+        </div>
+      </>
+    );
   if (!e.room) return <Home e={e} />;
   if (!e.S) return <Joining e={e} />;
   switch (e.S.phase) {
@@ -292,6 +314,13 @@ function Lobby({ e, S }: { e: Engine; S: GameState }) {
               <Share2 className="h-5 w-5" /> مشاركة
             </button>
           )}
+          <a className={`${btnGhost} flex-1`} href={`${link}&screen=1`} target="_blank" rel="noreferrer">
+            <Tv className="h-5 w-5" /> شاشة العرض
+          </a>
+        </div>
+        <p className="mt-2 text-center text-sm text-slate-400">افتح «شاشة العرض» على التلفزيون أو البروجكتر: تعرض الحرف والوقت والنتائج للكل.</p>
+        <AiBadge />
+        <div className="hidden">
         </div>
       </div>
 
@@ -776,5 +805,21 @@ function Final({ e, S }: { e: Engine; S: GameState }) {
         )}
       </div>
     </>
+  );
+}
+
+function AiBadge() {
+  const [st, setSt] = useState<{ aiEnabled: boolean; provider: string | null } | null>(null);
+  useEffect(() => {
+    fetch("/api/validate")
+      .then((r) => r.json())
+      .then(setSt)
+      .catch(() => {});
+  }, []);
+  if (!st) return null;
+  return (
+    <div className={`mt-3 rounded-2xl px-4 py-2 text-center text-sm font-bold ${st.aiEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+      {st.aiEnabled ? "🤖 التحقق الذكي مفعّل: نتأكد إن كل كلمة من تصنيفها الصحيح" : "📖 التحقق بالقاموس المدمج (التحقق الذكي غير مفعّل)"}
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 "use client";
-import { ALL_LETTERS, CATEGORIES, HARD_LETTERS, startsWithLetter } from "./arabic";
+import { ALL_LETTERS, CATEGORIES, HARD_LETTERS, normalize, startsWithLetter } from "./arabic";
 import { offlineCheck } from "./validate";
 import { neededFinishers } from "./scoring";
 import { sounds } from "./sound";
@@ -37,6 +37,8 @@ export class Engine {
   joinFailed = false;
   toasts: Toast[] = [];
   aiEnabled: boolean | null = null;
+  viewer = false; // شاشة العرض: تتابع فقط ولا تلعب
+  kicked = false;
 
   private net: Transport | null = null;
   private listeners = new Set<Listener>();
@@ -66,7 +68,7 @@ export class Engine {
     }
     this.myId = id;
     try {
-      this.myName = localStorage.getItem("insan_name") || "";
+      this.myName = sessionStorage.getItem("insan_name") || localStorage.getItem("insan_name") || "";
     } catch {}
   }
 
@@ -100,8 +102,19 @@ export class Engine {
     return this.S.rounds[this.S.rounds.length - 1];
   }
   draft(no: number) {
-    if (!this.drafts[no]) this.drafts[no] = { main: CATEGORIES.map(() => ""), extra: CATEGORIES.map(() => "") };
+    if (!this.drafts[no]) {
+      let saved: { main: string[]; extra: string[] } | null = null;
+      try {
+        saved = JSON.parse(sessionStorage.getItem(`insan_draft_${this.room}_${no}`) || "null");
+      } catch {}
+      this.drafts[no] = saved || { main: CATEGORIES.map(() => ""), extra: CATEGORIES.map(() => "") };
+    }
     return this.drafts[no];
+  }
+  private saveDraft(no: number) {
+    try {
+      sessionStorage.setItem(`insan_draft_${this.room}_${no}`, JSON.stringify(this.draft(no)));
+    } catch {}
   }
   private send(msg: Msg) {
     this.net?.send(msg);
@@ -119,6 +132,7 @@ export class Engine {
     this.myName = n.trim().slice(0, 20);
     try {
       localStorage.setItem("insan_name", this.myName);
+      sessionStorage.setItem("insan_name", this.myName);
     } catch {}
   }
 
@@ -141,7 +155,26 @@ export class Engine {
   join(code: string, local: boolean) {
     this.S = null;
     this.joinFailed = false;
+    this.kicked = false;
     this.open(code, local, false);
+  }
+
+  /** شاشة العرض: تدخل الغرفة كمشاهد فقط */
+  watch(code: string, local: boolean) {
+    this.viewer = true;
+    this.myId = "screen-" + rid();
+    this.S = null;
+    this.joinFailed = false;
+    this.open(code, local, false);
+  }
+
+  /** الغرفة المحفوظة لهذا التبويب (للرجوع تلقائياً بعد تحديث الصفحة) */
+  savedRoom(): string | null {
+    try {
+      return sessionStorage.getItem("insan_room");
+    } catch {
+      return null;
+    }
   }
 
   private open(code: string, local: boolean, create: boolean) {
@@ -151,6 +184,10 @@ export class Engine {
     const url = new URL(location.href);
     url.searchParams.set("r", code);
     history.replaceState(null, "", url);
+    if (!this.viewer)
+      try {
+        sessionStorage.setItem("insan_room", code);
+      } catch {}
     this.net = connect(
       code,
       this.myId,
@@ -160,7 +197,7 @@ export class Engine {
         onReady: () => {
           if (create) this.broadcast();
           else {
-            this.send({ t: "hello", d: { name: this.myName } });
+            this.hello();
             let tries = 0;
             const retry = () => {
               if (this.S) return;
@@ -169,7 +206,7 @@ export class Engine {
                 this.changed();
                 return;
               }
-              this.send({ t: "hello", d: { name: this.myName } });
+              this.hello();
               this.joinRetry = setTimeout(retry, 2500);
             };
             this.joinRetry = setTimeout(retry, 2500);
@@ -178,8 +215,8 @@ export class Engine {
         onReconnect: () => {
           if (this.isHost()) this.broadcast();
           else {
-            this.send({ t: "hello", d: { name: this.myName } });
-            this.sendDraft(true);
+            this.hello();
+            if (!this.viewer) this.sendDraft(true);
           }
         },
         onStatus: (s) => {
@@ -192,7 +229,15 @@ export class Engine {
     this.changed();
   }
 
+  private hello() {
+    if (this.viewer) this.send({ t: "sync" });
+    else this.send({ t: "hello", d: { name: this.myName } });
+  }
+
   leave() {
+    try {
+      sessionStorage.removeItem("insan_room");
+    } catch {}
     this.net?.close();
     this.net = null;
     this.room = null;
@@ -211,22 +256,67 @@ export class Engine {
       if (this.S && !(d.v > this.S.v || d.hostId !== this.S.hostId)) return;
       if (this.S && this.isHost() && d.hostId !== this.myId && d.v < this.S.v) return;
       const prevHost = this.S?.hostId;
+      const wasIn = !!this.S?.players[this.myId];
+      const rejoinedAsHost = !this.S && d.hostId === this.myId;
       this.S = d;
       this.offset = d.hostNow - Date.now();
       if (this.joinRetry) clearTimeout(this.joinRetry);
-      if (!d.players[this.myId] && this.myName) this.send({ t: "hello", d: { name: this.myName } });
-      if (d.phase === "closing" || (prevHost && prevHost !== d.hostId)) this.sendDraft(true);
+      if (rejoinedAsHost) {
+        // رجع المضيف بعد تحديث الصفحة: يستلم الحالة من اللاعبين ويكمل
+        this.offset = 0;
+        this.collected = {};
+        this.finishPayload = {};
+        if (d.phase === "closing") this.collectUntil = Date.now() + COLLECT_MS;
+        this.send({ t: "drafts" });
+        this.broadcast();
+        return;
+      }
+      if (!this.viewer && !d.players[this.myId] && this.myName) {
+        if (wasIn) {
+          // تم استرجاع لاعبي من جهاز آخر
+          this.kicked = true;
+          this.changed();
+          return;
+        }
+        this.hello();
+      }
+      if (!this.viewer && (d.phase === "closing" || (prevHost && prevHost !== d.hostId))) this.sendDraft(true);
       this.afterState();
+      return;
+    }
+    if (this.viewer) return;
+    if (m.t === "drafts") {
+      this.sendDraft(true);
+      return;
+    }
+    // المضيف حدّث الصفحة ورجع بدون الحالة: أقدم لاعب متصل يرسلها له
+    if (m.t === "hello" && this.S && !this.isHost() && from === this.S.hostId) {
+      const helper = this.S.order.find((id) => id !== this.S!.hostId && this.online.includes(id));
+      if (helper === this.myId) {
+        const copy: GameState = { ...this.S, v: this.S.v + 1, hostNow: this.now() };
+        this.send({ t: "state", d: copy });
+      }
       return;
     }
     if (!this.isHost() || !this.S) return;
     const S = this.S;
-    if (m.t === "hello") {
-      const name = String(m.d?.name || "لاعب").slice(0, 20);
+    if (m.t === "sync") {
+      this.broadcast();
+    } else if (m.t === "hello") {
+      let name = String(m.d?.name || "لاعب").trim().slice(0, 20) || "لاعب";
       if (!S.players[from]) {
-        S.players[from] = { name, joinedAt: Date.now() };
-        S.order.push(from);
-        this.toast(`انضم ${name} 👋`);
+        const same = (id: string) => normalize(S.players[id]?.name || "") === normalize(name);
+        // نفس الاسم وصاحبه غير متصل = نفس اللاعب دخل من جهاز آخر: نسترجع لاعبه ونقاطه
+        const old = S.order.find((id) => id !== from && id !== this.myId && same(id) && !this.online.includes(id));
+        if (old) {
+          this.reassign(old, from);
+          this.toast(`رجع ${name} 🔄`);
+        } else {
+          if (S.order.some(same)) name = `${name} ${S.order.filter(same).length + 1}`;
+          S.players[from] = { name, joinedAt: Date.now() };
+          S.order.push(from);
+          this.toast(`انضم ${name} 👋`);
+        }
       } else S.players[from].name = name;
       this.broadcast();
     } else if (m.t === "draft") {
@@ -234,9 +324,35 @@ export class Engine {
       if (r && m.d.round === r.no && !this.finishPayload[from]) this.collected[from] = { main: m.d.main, extra: m.d.extra };
     } else if (m.t === "finish") {
       this.hostFinish(from, m.d.round, m.d.elapsedMs, m.d.main, m.d.extra);
-    } else if (m.t === "override") {
-      // فقط المضيف يقدر يعدل الحكم، ورسائل غيره تُتجاهل
     }
+  }
+
+  /** نقل لاعب (اسمه ونقاطه وإجاباته) من معرّف قديم لمعرّف جديد */
+  private reassign(oldId: string, newId: string) {
+    const S = this.S!;
+    S.players[newId] = S.players[oldId];
+    delete S.players[oldId];
+    S.order = S.order.map((x) => (x === oldId ? newId : x));
+    const mv = <T,>(o: Record<string, T>) => {
+      if (oldId in o) {
+        o[newId] = o[oldId];
+        delete o[oldId];
+      }
+    };
+    for (const r of S.rounds) {
+      r.participants = r.participants.map((x) => (x === oldId ? newId : x));
+      r.finishers = r.finishers.map((f) => (f.id === oldId ? { ...f, id: newId } : f));
+      mv(r.answers);
+      mv(r.checks);
+      for (const k of Object.keys(r.overrides)) {
+        if (k.startsWith(oldId + "|")) {
+          r.overrides[newId + k.slice(oldId.length)] = r.overrides[k];
+          delete r.overrides[k];
+        }
+      }
+    }
+    mv(this.collected);
+    mv(this.finishPayload);
   }
 
   private onPresence(ids: string[]) {
@@ -290,6 +406,7 @@ export class Engine {
     const r = this.currentRound();
     if (!r || this.S?.phase !== "playing") return;
     this.draft(r.no)[field][i] = value.slice(0, 40);
+    this.saveDraft(r.no);
     this.sendDraft(false);
   }
 
