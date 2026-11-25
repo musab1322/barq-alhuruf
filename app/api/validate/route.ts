@@ -22,6 +22,7 @@ function aiConfig() {
       key: process.env.GROQ_API_KEY,
       base: process.env.AI_BASE_URL || "https://api.groq.com/openai/v1",
       model: process.env.AI_MODEL || "llama-3.3-70b-versatile",
+      fallbacks: ["llama-3.1-8b-instant", "openai/gpt-oss-120b"],
     };
   }
   if (process.env.OPENAI_API_KEY) {
@@ -29,10 +30,14 @@ function aiConfig() {
       key: process.env.OPENAI_API_KEY,
       base: process.env.AI_BASE_URL || "https://api.openai.com/v1",
       model: process.env.AI_MODEL || "gpt-4o-mini",
+      fallbacks: ["gpt-4.1-mini"],
     };
   }
   return null;
 }
+
+let workingModel: string | null = null;
+let lastError = "";
 
 // ذاكرة مؤقتة حتى لا نسأل عن نفس الكلمة مرتين
 const cache = new Map<string, Result>();
@@ -51,24 +56,33 @@ async function aiCheck(items: { i: number; cat: number; answer: string }[]): Pro
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 9000);
   try {
-    const res = await fetch(`${cfg.base}/chat/completions`, {
-      method: "POST",
-      signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
-      body: JSON.stringify({
-        model: cfg.model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: JSON.stringify(list) },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      console.error("AI validation failed", res.status, (await res.text()).slice(0, 300));
-      return null;
+    let res: Response | null = null;
+    for (const model of [...new Set([workingModel || cfg.model, cfg.model, ...cfg.fallbacks])]) {
+      res = await fetch(`${cfg.base}/chat/completions`, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key.trim()}` },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: JSON.stringify(list) },
+          ],
+        }),
+      });
+      if (res.ok) {
+        workingModel = model;
+        break;
+      }
+      const txt = (await res.text()).slice(0, 300);
+      lastError = `HTTP ${res.status}: ${txt}`;
+      console.error("AI validation failed", model, lastError);
+      // نجرب نموذج ثاني فقط إذا كانت المشكلة في النموذج نفسه
+      if (!(res.status === 404 || res.status === 400) || !/model/i.test(txt)) return null;
     }
+    if (!res || !res.ok) return null;
     const data = await res.json();
     const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
     const out = new Map<number, { ok: boolean; reason?: string }>();
@@ -77,6 +91,7 @@ async function aiCheck(items: { i: number; cat: number; answer: string }[]): Pro
     }
     return out;
   } catch (e) {
+    lastError = String(e).slice(0, 200);
     console.error("AI validation error", e);
     return null;
   } finally {
@@ -144,14 +159,14 @@ export async function GET(req: Request) {
   const cfg = aiConfig();
   const provider = process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : null;
   const wantTest = new URL(req.url).searchParams.has("test");
-  if (cfg && wantTest && (!selfTest || Date.now() - selfTest.at > 10 * 60 * 1000)) {
+  if (cfg && wantTest && (!selfTest || !selfTest.ok || Date.now() - selfTest.at > 10 * 60 * 1000)) {
     const out = await aiCheck([
       { i: 0, cat: 1, answer: "موز" },
       { i: 1, cat: 1, answer: "ماعز" },
     ]);
     selfTest = out
       ? { at: Date.now(), ok: out.get(0)?.ok === false && out.get(1)?.ok === true, detail: `موز كحيوان=${out.get(0)?.ok} ، ماعز كحيوان=${out.get(1)?.ok}` }
-      : { at: Date.now(), ok: false, detail: "فشل الاتصال بخدمة الذكاء الاصطناعي (تأكد من المفتاح)" };
+      : { at: Date.now(), ok: false, detail: `فشل الاتصال بخدمة الذكاء الاصطناعي: ${lastError}` };
   }
-  return Response.json({ aiEnabled: !!cfg, provider, model: cfg?.model ?? null, selfTest });
+  return Response.json({ aiEnabled: !!cfg, provider, model: workingModel || cfg?.model || null, selfTest });
 }
