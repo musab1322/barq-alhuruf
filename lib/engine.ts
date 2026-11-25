@@ -479,15 +479,17 @@ export class Engine {
   startGame() {
     if (!this.isHost() || !this.S) return;
     this.S.rounds = [];
-    this.S.used = [];
+    // ما نصفّر الحروف المستخدمة: حتى في لعبة جديدة بنفس الغرفة ما يتكرر حرف إلا بعد ما تخلص كل الحروف
     this.startRound();
   }
 
   startRound() {
     const S = this.S;
     if (!this.isHost() || !S) return;
+    if (S.phase === "playing" || S.phase === "closing") return; // منع بدء جولتين بالخطأ (ضغط مزدوج)
     const allowed = ALL_LETTERS.filter((l) => !(S.settings.hardOff && HARD_LETTERS.includes(l)));
-    let pool = allowed.filter((l) => !S.used.includes(l));
+    const usedNow = new Set([...(S.used || []), ...S.rounds.map((r) => r.letter)]);
+    let pool = allowed.filter((l) => !usedNow.has(l));
     if (!pool.length) {
       S.used = [];
       pool = allowed;
@@ -605,7 +607,6 @@ export class Engine {
     if (!this.isHost() || !this.S) return;
     this.S.phase = "lobby";
     this.S.rounds = [];
-    this.S.used = [];
     this.broadcast();
   }
 
