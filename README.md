@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# إنسان حيوان نبات جماد بلاد 🌴
 
-## Getting Started
+لعبة ويب جماعية لحظية بالعربي (Next.js + Tailwind + Lucide + Supabase Realtime) مع تحقق ذكي من الإجابات.
 
-First, run the development server:
-
+## التشغيل محلياً
 ```bash
+npm install
+cp .env.example .env.local   # ضع مفتاح GROQ_API_KEY إذا تبغى التحقق الذكي
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
+افتح http://localhost:3000 . للتجربة بدون إنترنت أضف `?local=1` وافتح أكثر من تبويب.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## الرفع على Vercel
+1. ارفع المشروع على GitHub.
+2. في https://vercel.com/new اختر المستودع واضغط Deploy.
+3. (اختياري) في Settings → Environment Variables أضف `GROQ_API_KEY` (مجاني من https://console.groq.com/keys) ثم أعد النشر.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## هيكل الحالة ومنع التضارب
+- الغرفة قناة Supabase Realtime باسم `insan-<الرمز>`: Broadcast للرسائل و Presence لمعرفة المتصلين. لا توجد جداول.
+- **المضيف** (منشئ الغرفة) هو المرجع الوحيد للحالة `GameState` (`lib/types.ts`). اللاعبون يرسلون طلبات فقط: `hello` و `draft` و `finish`.
+- المضيف يعالج الرسائل واحدة تلو الأخرى، فإذا ضغط لاعبان «انتهيت» بنفس اللحظة تُسجَّل الأولى ثم الثانية، وتُغلق الجولة داخل نفس المعالجة عند الوصول للعدد المطلوب، فلا يمكن تسجيل منهٍ زائد.
+- كل بث للحالة يحمل رقم إصدار `v` متزايد، واللاعب يقبل الأحدث فقط.
+- إذا خرج المضيف أكثر من 4 ثوانٍ يتسلم أقدم لاعب متصل ويكمل اللعبة.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## القوانين
+- حرف عشوائي بدون تكرار، و5 خانات: إنسان، حيوان، نبات، جماد، بلاد، ولكل خانة إجابة ثانية اختيارية بدون نقاط.
+- «انتهيت» يتحقق من الحرف (مع توحيد الهمزات وتجاهل «ال») ومن التصنيف بالذكاء الاصطناعي، ويرفض الإنهاء مع رسالة محددة عند الخطأ.
+- تنتهي الجولة عند أول لاعبين ينهون (أو أول لاعب إذا كانوا لاعبين أو أقل) أو عند انتهاء الوقت.
+- النقاط: 10 فريدة، 5 مكررة، 0 فارغة أو خاطئة. التعادل يُكسر بالأسرع.
+- المضيف يقدر يصحح حكم أي إجابة من شاشة النتائج.
