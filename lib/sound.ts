@@ -31,6 +31,7 @@ export const sounds = {
   tick() { tone(880, 0, 0.08, "square", 0.05); },
   start() { [523, 659, 784].forEach((f, i) => tone(f, i * 0.1, 0.25, "triangle")); },
   finish() { tone(660, 0, 0.15, "sine"); tone(990, 0.12, 0.25, "sine"); },
+  chat() { tone(1200, 0, 0.08, "sine", 0.08); tone(1500, 0.08, 0.1, "sine", 0.08); },
   error() { tone(220, 0, 0.25, "sawtooth", 0.08); },
   timeUp() { [440, 349, 262].forEach((f, i) => tone(f, i * 0.18, 0.35, "triangle", 0.18)); },
   win() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, i * 0.13, 0.3, "triangle", 0.18)); },

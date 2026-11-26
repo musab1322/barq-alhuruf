@@ -35,6 +35,7 @@ export interface Settings {
   rounds: number;
   time: number; // ثواني
   hardOff: boolean;
+  finishers?: number; // 0 = تلقائي، -1 = كل اللاعبين، أو عدد محدد
 }
 
 export interface GameState {
@@ -47,6 +48,7 @@ export interface GameState {
   order: string[];
   rounds: RoundRecord[];
   used: string[];
+  chat?: ChatMsg[];
 }
 
 export type Msg =
@@ -55,4 +57,13 @@ export type Msg =
   | { t: "finish"; d: { round: number; elapsedMs: number; main: string[]; extra: string[] } }
   | { t: "draft"; d: { round: number; main: string[]; extra: string[] } }
   | { t: "sync" }
-  | { t: "drafts" };
+  | { t: "drafts" }
+  | { t: "chat"; d: { text: string } };
+
+export interface ChatMsg {
+  id: string;
+  from: string;
+  name: string;
+  text: string;
+  at: number;
+}

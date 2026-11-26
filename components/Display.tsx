@@ -6,7 +6,8 @@ import QRCode from "qrcode";
 import { useEffect, useRef, useState } from "react";
 import { CATEGORIES } from "@/lib/arabic";
 import type { Engine } from "@/lib/engine";
-import { fmtTime, scoreRound, standings } from "@/lib/scoring";
+import { finishRuleText, fmtTime, scoreRound, standings } from "@/lib/scoring";
+import Credit from "./Credit";
 import type { GameState, RoundRecord } from "@/lib/types";
 
 /** شاشة العرض الكبيرة (تلفزيون / بروجكتر): تتابع الغرفة بدون ما تلعب */
@@ -38,6 +39,8 @@ export default function Display({ e }: { e: Engine }) {
         ) : S.phase === "final" ? (
           <FinalView S={S} />
         ) : null}
+        {S && <ChatTicker S={S} />}
+        <Credit dark />
       </div>
     </div>
   );
@@ -155,7 +158,7 @@ function PlayingView({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
       </div>
       <div className="flex flex-col gap-8">
         <Countdown e={e} r={r} />
-        <div className="text-center text-3xl text-white/80">تنتهي الجولة عند {r.needed === 1 ? "أول لاعب ينهي" : "أول لاعبين ينهون"} 🏁</div>
+        <div className="text-center text-3xl text-white/80">تنتهي الجولة عند {finishRuleText(r.needed, r.participants.length)} 🏁</div>
         <div className="grid gap-3 sm:grid-cols-2">
           {r.participants.map((id) => {
             const f = r.finishers.findIndex((x) => x.id === id);
@@ -295,6 +298,21 @@ function FinalView({ S }: { S: GameState }) {
         <P i={0} h="h-60" medal="🥇" color="bg-gradient-to-t from-amber-500 to-yellow-400" />
         <P i={2} h="h-28" medal="🥉" color="bg-orange-700" />
       </div>
+    </div>
+  );
+}
+
+/** آخر رسائل الشات تظهر على الشاشة الكبيرة */
+function ChatTicker({ S }: { S: GameState }) {
+  const msgs = (S.chat || []).slice(-3);
+  if (!msgs.length) return null;
+  return (
+    <div className="flex flex-wrap gap-3">
+      {msgs.map((m) => (
+        <div key={m.id} className="animate-[slideup_.3s_ease] rounded-2xl bg-white/10 px-4 py-2 text-xl backdrop-blur">
+          💬 <span className="font-black text-amber-300">{m.name}:</span> {m.text}
+        </div>
+      ))}
     </div>
   );
 }

@@ -95,6 +95,16 @@ export function fmtTime(ms: number | null | undefined): string {
 }
 
 /** عدد المنهين المطلوب لإغلاق الجولة: لاعب واحد إذا كانوا 2 أو أقل، واثنين إذا 3 فأكثر */
-export function neededFinishers(n: number): number {
-  return n >= 3 ? 2 : 1;
+export function neededFinishers(n: number, setting = 0): number {
+  if (setting === -1) return Math.max(1, n); // كل اللاعبين
+  if (setting > 0) return Math.max(1, Math.min(setting, n));
+  return n >= 3 ? 2 : 1; // تلقائي
+}
+
+/** نص يوضح متى تنتهي الجولة */
+export function finishRuleText(needed: number, total: number): string {
+  if (needed >= total && total > 1) return "كل اللاعبين ينهون";
+  if (needed === 1) return "أول لاعب ينهي";
+  if (needed === 2) return "أول لاعبين ينهون";
+  return `أول ${needed} لاعبين ينهون`;
 }

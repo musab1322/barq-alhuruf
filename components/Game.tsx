@@ -16,6 +16,8 @@ import {
   RotateCcw,
   Share2,
   Sparkles,
+  MessageCircle,
+  Send,
   Timer,
   Tv,
   Trophy,
@@ -27,9 +29,10 @@ import {
 import { useEffect, useReducer, useRef, useState } from "react";
 import { CATEGORIES, HARD_LETTERS } from "@/lib/arabic";
 import { Engine } from "@/lib/engine";
-import { fmtTime, scoreRound, standings } from "@/lib/scoring";
+import { finishRuleText, fmtTime, scoreRound, standings } from "@/lib/scoring";
 import { sounds } from "@/lib/sound";
 import type { GameState, RoundRecord } from "@/lib/types";
+import Credit from "./Credit";
 import Display from "./Display";
 
 // ---------- الجذر ----------
@@ -54,6 +57,7 @@ export default function Game() {
   return (
     <Shell>
       <Screen e={engine} />
+      {engine.S && engine.room && !engine.viewer && !engine.kicked && <Chat e={engine} S={engine.S} />}
       <Toasts e={engine} />
     </Shell>
   );
@@ -63,6 +67,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_15%_0%,#7c3aed_0,transparent_45%),radial-gradient(circle_at_100%_100%,#f97316_0,transparent_40%),linear-gradient(160deg,#1e1b4b,#0f172a)] px-4 py-6 text-slate-800">
       <div className="mx-auto max-w-3xl">{children}</div>
+      <Credit />
     </div>
   );
 }
@@ -368,6 +373,18 @@ function Lobby({ e, S }: { e: Engine; S: GameState }) {
           <input type="checkbox" className="h-5 w-5 accent-orange-500" disabled={!host} checked={st.hardOff} onChange={(x) => e.updateSettings({ hardOff: x.target.checked })} />
           استبعاد الحروف الصعبة ({HARD_LETTERS.join(" ")})
         </label>
+        <label className="mt-4 block">
+          <span className="mb-1 block font-bold">تنتهي الجولة عند</span>
+          <select className={input} disabled={!host} value={st.finishers ?? 0} onChange={(x) => e.updateSettings({ finishers: +x.target.value })}>
+            <option value={0}>تلقائي (أول لاعب إذا كنتم ٢، وأول لاعبين إذا ٣ أو أكثر)</option>
+            <option value={1}>أول لاعب ينهي</option>
+            <option value={2}>أول لاعبين ينهون</option>
+            <option value={3}>أول ٣ لاعبين</option>
+            <option value={4}>أول ٤ لاعبين</option>
+            <option value={5}>أول ٥ لاعبين</option>
+            <option value={-1}>كل اللاعبين ينهون (أو ينتهي الوقت)</option>
+          </select>
+        </label>
       </div>
 
       <div className="mt-4">
@@ -460,7 +477,7 @@ function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
       </div>
 
       <div className="mt-3 rounded-2xl bg-white/10 px-4 py-2 text-center text-sm text-white">
-        تنتهي الجولة عند {r.needed === 1 ? "أول لاعب ينهي" : "أول لاعبين ينهون"} ·{" "}
+        تنتهي الجولة عند {finishRuleText(r.needed, r.participants.length)} ·{" "}
         {r.finishers.length ? (
           <span className="font-bold">
             أنهى:{" "}
@@ -821,5 +838,78 @@ function AiBadge() {
     <div className={`mt-3 rounded-2xl px-4 py-2 text-center text-sm font-bold ${st.aiEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
       {st.aiEnabled ? "🤖 التحقق الذكي مفعّل: نتأكد إن كل كلمة من تصنيفها الصحيح" : "📖 التحقق بالقاموس المدمج (التحقق الذكي غير مفعّل)"}
     </div>
+  );
+}
+
+// ---------- الشات بين اللاعبين ----------
+function Chat({ e, S }: { e: Engine; S: GameState }) {
+  const msgs = S.chat || [];
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [seen, setSeen] = useState(msgs.length ? msgs[msgs.length - 1].id : "");
+  const listRef = useRef<HTMLDivElement>(null);
+  const lastId = msgs.length ? msgs[msgs.length - 1].id : "";
+  const seenIdx = msgs.findIndex((m) => m.id === seen);
+  const unread = open ? 0 : msgs.slice(seenIdx + 1).filter((m) => m.from !== e.myId).length;
+  const prevLast = useRef(lastId);
+  useEffect(() => {
+    if (open) setSeen(lastId);
+    if (lastId && lastId !== prevLast.current) {
+      const m = msgs[msgs.length - 1];
+      if (m.from !== e.myId) sounds.chat();
+    }
+    prevLast.current = lastId;
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+  }, [lastId, open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const send = () => {
+    if (!text.trim()) return;
+    e.sendChat(text);
+    setText("");
+  };
+  return (
+    <>
+      <button
+        aria-label="الشات"
+        onClick={() => setOpen((o) => !o)}
+        className="fixed bottom-5 left-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-xl shadow-violet-900/40 transition active:scale-95"
+      >
+        {open ? <X className="h-6 w-6" /> : <MessageCircle className="h-7 w-7" />}
+        {unread > 0 && <span className="absolute -right-1 -top-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-rose-500 px-1.5 text-xs font-black">{unread}</span>}
+      </button>
+      {open && (
+        <div className="fixed bottom-24 left-4 right-4 z-40 flex max-h-[60vh] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:left-5 sm:right-auto sm:w-96">
+          <div className="flex items-center gap-2 bg-gradient-to-l from-violet-600 to-fuchsia-600 px-4 py-3 font-black text-white">
+            <MessageCircle className="h-5 w-5" /> شات الغرفة
+          </div>
+          <div ref={listRef} className="flex-1 space-y-2 overflow-y-auto p-3">
+            {msgs.length === 0 && <p className="py-6 text-center text-sm text-slate-400">ما فيه رسائل للحين، قل هلا 👋</p>}
+            {msgs.map((m) => {
+              const mine = m.from === e.myId;
+              return (
+                <div key={m.id} className={`flex ${mine ? "justify-start" : "justify-end"}`}>
+                  <div className={`max-w-[80%] rounded-2xl px-3 py-2 ${mine ? "bg-violet-600 text-white" : "bg-slate-100"}`}>
+                    {!mine && <div className="text-xs font-black text-violet-700">{m.name}</div>}
+                    <div className="break-words">{m.text}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-2 border-t border-slate-100 p-2">
+            <input
+              className="flex-1 rounded-xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-violet-400"
+              placeholder="اكتب رسالة…"
+              maxLength={200}
+              value={text}
+              onChange={(x) => setText(x.target.value)}
+              onKeyDown={(x) => x.key === "Enter" && send()}
+            />
+            <button onClick={send} className="rounded-xl bg-violet-600 px-3 text-white" aria-label="إرسال">
+              <Send className="h-5 w-5 -scale-x-100" />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

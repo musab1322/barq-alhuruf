@@ -154,7 +154,8 @@ export class Engine {
       hostId: this.myId,
       hostNow: Date.now(),
       phase: "lobby",
-      settings: { rounds: 5, time: 120, hardOff: true },
+      settings: { rounds: 5, time: 120, hardOff: true, finishers: 0 },
+      chat: [],
       players: { [this.myId]: { name: this.myName, joinedAt: Date.now() } },
       order: [this.myId],
       rounds: [],
@@ -323,7 +324,9 @@ export class Engine {
     }
     if (!this.isHost() || !this.S) return;
     const S = this.S;
-    if (m.t === "sync") {
+    if (m.t === "chat") {
+      this.hostChat(from, m.d?.text);
+    } else if (m.t === "sync") {
       this.broadcast();
     } else if (m.t === "hello") {
       let name = String(m.d?.name || "لاعب").trim().slice(0, 20) || "لاعب";
@@ -476,6 +479,28 @@ export class Engine {
     this.broadcast();
   }
 
+  // ---------- الشات ----------
+  private chatTimes: Record<string, number[]> = {};
+  sendChat(text: string) {
+    const t = text.trim().slice(0, 200);
+    if (!t || !this.S || this.viewer) return;
+    if (this.isHost()) this.hostChat(this.myId, t);
+    else this.send({ t: "chat", d: { text: t } });
+  }
+  private hostChat(from: string, text: unknown) {
+    const S = this.S;
+    if (!S || !S.players[from]) return;
+    const t = String(text || "").trim().slice(0, 200);
+    if (!t) return;
+    // حماية بسيطة من الإزعاج: 5 رسائل كحد أقصى كل 10 ثواني
+    const now = Date.now();
+    const times = (this.chatTimes[from] = (this.chatTimes[from] || []).filter((x) => now - x < 10000));
+    if (times.length >= 5) return;
+    times.push(now);
+    S.chat = [...(S.chat || []), { id: rid(), from, name: S.players[from].name, text: t, at: now }].slice(-60);
+    this.broadcast();
+  }
+
   startGame() {
     if (!this.isHost() || !this.S) return;
     this.S.rounds = [];
@@ -507,7 +532,7 @@ export class Engine {
       closedAt: 0,
       participants,
       finishers: [],
-      needed: neededFinishers(participants.length),
+      needed: neededFinishers(participants.length, S.settings.finishers ?? 0),
       answers: {},
       checks: {},
       overrides: {},
