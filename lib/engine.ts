@@ -512,7 +512,7 @@ export class Engine {
     const S = this.S;
     if (!this.isHost() || !S) return;
     if (S.phase === "playing" || S.phase === "closing") return; // منع بدء جولتين بالخطأ (ضغط مزدوج)
-    const allowed = ALL_LETTERS.filter((l) => !(S.settings.hardOff && HARD_LETTERS.includes(l)));
+    const allowed = allowedLetters(S.settings);
     const usedNow = new Set([...(S.used || []), ...S.rounds.map((r) => r.letter)]);
     let pool = allowed.filter((l) => !usedNow.has(l));
     if (!pool.length) {
@@ -522,7 +522,7 @@ export class Engine {
     const letter = pool[Math.floor(Math.random() * pool.length)];
     S.used.push(letter);
     const participants = S.order.filter((id) => this.online.includes(id));
-    const startedAt = Date.now() + 1500; // مهلة صغيرة حتى تصل الرسالة للجميع
+    const startedAt = Date.now() + 3500; // عد تنازلي ٣ ثواني قبل البداية (تنبيه الحرف الجديد)
     S.rounds.push({
       id: rid(),
       no: S.rounds.length + 1,
@@ -579,12 +579,17 @@ export class Engine {
     this.finalizing = true;
     const answers: RoundRecord["answers"] = {};
     const checks: RoundRecord["checks"] = {};
-    const items: { pid: string; cat: number; answer: string }[] = [];
+    const checksX: NonNullable<RoundRecord["checksX"]> = {};
+    const items: { pid: string; cat: number; answer: string; extra?: boolean }[] = [];
     const clean = (a?: string[]) => CATEGORIES.map((_, i) => String(a?.[i] || "").trim().slice(0, 40));
     for (const pid of r.participants) {
       const fp = this.finishPayload[pid];
       const src = fp || this.collected[pid] || (pid === this.myId ? this.draft(r) : undefined);
       answers[pid] = { main: clean(src?.main), extra: clean(src?.extra) };
+      checksX[pid] = CATEGORIES.map(() => ({ ok: false }) as Check);
+      answers[pid].extra.forEach((answer, cat) => {
+        if (answer) items.push({ pid, cat, answer, extra: true });
+      });
       if (fp) checks[pid] = CATEGORIES.map(() => ({ ok: true }));
       else {
         checks[pid] = CATEGORIES.map(() => ({ ok: false }) as Check);
@@ -598,7 +603,7 @@ export class Engine {
     if (items.length) {
       const res = await validate(r.letter, items.map(({ cat, answer }) => ({ cat, answer })));
       ai = !!res.ai;
-      items.forEach((it, i) => (checks[it.pid][it.cat] = res.results[i] || { ok: true }));
+      items.forEach((it, i) => ((it.extra ? checksX : checks)[it.pid][it.cat] = res.results[i] || { ok: true }));
     } else ai = this.aiEnabled ?? false;
     // تأكد أن الحالة ما تغيرت أثناء الانتظار
     if (this.S !== S || this.currentRound() !== r || S.phase !== "closing" || !this.isHost()) {
@@ -607,17 +612,18 @@ export class Engine {
     }
     r.answers = answers;
     r.checks = checks;
+    r.checksX = checksX;
     r.ai = ai;
     S.phase = "results";
     this.finalizing = false;
     this.broadcast();
   }
 
-  toggleOverride(pid: string, i: number, currentValid: boolean) {
+  toggleOverride(pid: string, i: number, currentValid: boolean, extra = false) {
     const S = this.S;
     const r = this.currentRound();
     if (!this.isHost() || !S || !r || S.phase !== "results") return;
-    const key = `${pid}|${i}`;
+    const key = extra ? `${pid}|x|${i}` : `${pid}|${i}`;
     r.overrides[key] = !currentValid;
     this.broadcast();
   }
@@ -706,4 +712,11 @@ async function validate(letter: string, items: { cat: number; answer: string }[]
       results: items.map(({ cat, answer }) => offlineCheck(cat, answer, letter)),
     };
   }
+}
+
+/** الحروف المسموحة حسب الإعدادات */
+export function allowedLetters(st: Settings): string[] {
+  const chosen = (st.letters || []).filter((l) => ALL_LETTERS.includes(l));
+  if (chosen.length) return ALL_LETTERS.filter((l) => chosen.includes(l));
+  return ALL_LETTERS.filter((l) => !(st.hardOff && HARD_LETTERS.includes(l)));
 }

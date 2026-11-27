@@ -227,7 +227,11 @@ function ResultsView({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
                   <td key={k} className="p-3 align-top">
                     <div className={`font-bold ${c.valid ? "" : "text-rose-500 line-through"}`}>{c.main || <span className="text-slate-300">—</span>}</div>
                     <div className={`text-base font-black ${c.points === 10 ? "text-emerald-600" : c.points === 5 ? "text-amber-600" : "text-rose-500"}`}>{c.points}</div>
-                    {c.extra && <div className="text-sm text-slate-400">+ {c.extra}</div>}
+                    {c.extra && (
+                      <div className={`text-base ${c.extraValid ? "text-slate-500" : "text-rose-400 line-through"}`}>
+                        + {c.extra} <span className="font-black">({c.extraPoints})</span>
+                      </div>
+                    )}
                   </td>
                 ))}
                 <td dir="ltr" className="p-3 text-right font-mono text-xl">

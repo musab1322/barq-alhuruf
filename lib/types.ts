@@ -27,6 +27,7 @@ export interface RoundRecord {
   needed: number; // عدد المنهين المطلوب لإغلاق الجولة
   answers: Record<string, { main: string[]; extra: string[] }>;
   checks: Record<string, Check[]>;
+  checksX?: Record<string, Check[]>; // التحقق من الإجابة الثانية
   overrides: Record<string, boolean>; // "playerId|catIndex" -> قرار المضيف
   ai: boolean;
 }
@@ -35,6 +36,7 @@ export interface Settings {
   rounds: number;
   time: number; // ثواني
   hardOff: boolean;
+  letters?: string[]; // الحروف المسموحة (إذا فاضية نستخدم hardOff)
   finishers?: number; // 0 = تلقائي، -1 = كل اللاعبين، أو عدد محدد
 }
 

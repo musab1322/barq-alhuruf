@@ -8,6 +8,9 @@ export interface CellResult {
   points: number;
   reason?: string;
   overridden: boolean;
+  extraValid: boolean;
+  extraPoints: number;
+  extraReason?: string;
 }
 
 export interface RoundScore {
@@ -17,7 +20,12 @@ export interface RoundScore {
   ranking: string[];
 }
 
-/** حساب نقاط جولة: 10 للفريدة، 5 للمكررة، 0 للفارغة أو الخاطئة. الإجابة الثانية دائماً 0 */
+/**
+ * حساب نقاط جولة، لكل خانة:
+ * الإجابة الأساسية والإجابة الثانية تنحسب بنفس القاعدة: 10 للفريدة، 5 للمكررة، 0 للفارغة أو الخاطئة.
+ * التكرار يُحسب بين كل الإجابات الصحيحة في الخانة (الأساسية والثانية لكل اللاعبين).
+ * الإجابة الثانية إذا كانت نفس إجابتك الأساسية = 0.
+ */
 export function scoreRound(r: RoundRecord): RoundScore {
   const cells: Record<string, CellResult[]> = {};
   const points: Record<string, number> = {};
@@ -27,11 +35,20 @@ export function scoreRound(r: RoundRecord): RoundScore {
     const a = r.answers[pid] || { main: [], extra: [] };
     cells[pid] = CATEGORIES.map((_, i) => {
       const main = (a.main[i] || "").trim();
+      const extra = (a.extra[i] || "").trim();
       const chk = r.checks[pid]?.[i];
       const key = `${pid}|${i}`;
       const overridden = key in r.overrides;
       const valid = overridden ? r.overrides[key] && !!main : !!main && !!chk?.ok;
-      return { main, extra: (a.extra[i] || "").trim(), valid, points: 0, reason: chk?.reason, overridden };
+      const xchk = r.checksX?.[pid]?.[i];
+      const xkey = `${pid}|x|${i}`;
+      let extraValid = xkey in r.overrides ? r.overrides[xkey] && !!extra : !!extra && !!xchk?.ok;
+      let extraReason = xchk?.reason;
+      if (extraValid && main && compareKey(extra) === compareKey(main)) {
+        extraValid = false;
+        extraReason = "نفس إجابتك الأولى";
+      }
+      return { main, extra, valid, points: 0, reason: chk?.reason, overridden, extraValid, extraPoints: 0, extraReason };
     });
     const f = r.finishers.find((x) => x.id === pid);
     time[pid] = f ? f.elapsedMs : null;
@@ -39,18 +56,21 @@ export function scoreRound(r: RoundRecord): RoundScore {
 
   CATEGORIES.forEach((_, i) => {
     const counts: Record<string, number> = {};
+    const add = (w: string) => (counts[compareKey(w)] = (counts[compareKey(w)] || 0) + 1);
     r.participants.forEach((pid) => {
       const c = cells[pid][i];
-      if (c.valid) counts[compareKey(c.main)] = (counts[compareKey(c.main)] || 0) + 1;
+      if (c.valid) add(c.main);
+      if (c.extraValid) add(c.extra);
     });
     r.participants.forEach((pid) => {
       const c = cells[pid][i];
       c.points = c.valid ? (counts[compareKey(c.main)] > 1 ? 5 : 10) : 0;
+      c.extraPoints = c.extraValid ? (counts[compareKey(c.extra)] > 1 ? 5 : 10) : 0;
     });
   });
 
   r.participants.forEach((pid) => {
-    points[pid] = cells[pid].reduce((s, c) => s + c.points, 0);
+    points[pid] = cells[pid].reduce((s, c) => s + c.points + c.extraPoints, 0);
   });
 
   const ranking = [...r.participants].sort((a, b) => {

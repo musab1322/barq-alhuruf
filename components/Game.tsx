@@ -27,8 +27,8 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
-import { CATEGORIES, HARD_LETTERS } from "@/lib/arabic";
-import { Engine } from "@/lib/engine";
+import { ALL_LETTERS, CATEGORIES, HARD_LETTERS } from "@/lib/arabic";
+import { allowedLetters, Engine } from "@/lib/engine";
 import { finishRuleText, fmtTime, scoreRound, standings } from "@/lib/scoring";
 import { sounds } from "@/lib/sound";
 import type { GameState, RoundRecord } from "@/lib/types";
@@ -245,7 +245,7 @@ function Home({ e }: { e: Engine }) {
         <h2 className="mb-3 text-xl font-black">طريقة اللعب</h2>
         <ul className="list-disc space-y-1.5 pr-5 text-slate-600">
           <li>كل جولة يظهر حرف عشوائي (ما يتكرر)، واكتب كلمة تبدأ فيه بكل خانة.</li>
-          <li>لكل خانة تقدر تكتب إجابة ثانية للمتعة، بس ما تنحسب لها نقاط.</li>
+          <li>لكل خانة تقدر تكتب إجابة ثانية اختيارية، وتنحسب لها نقاط زي الأولى (١٠ إذا كانت فريدة).</li>
           <li>اضغط <b>انتهيت</b>: نتحقق إن كل كلمة تبدأ بالحرف وإنها من التصنيف الصحيح. لو فيه خطأ تعدله وتحاول مرة ثانية.</li>
           <li>الجولة تنتهي عند أول لاعبين ينهون (أو أول لاعب إذا كنتم اثنين)، أو عند انتهاء الوقت.</li>
           <li>النقاط: ١٠ للإجابة الفريدة، ٥ للمكررة، و٠ للفاضية أو الغلط. عند التعادل يتقدم الأسرع.</li>
@@ -369,10 +369,7 @@ function Lobby({ e, S }: { e: Engine; S: GameState }) {
             </select>
           </label>
         </div>
-        <label className="mt-4 flex items-center gap-2">
-          <input type="checkbox" className="h-5 w-5 accent-orange-500" disabled={!host} checked={st.hardOff} onChange={(x) => e.updateSettings({ hardOff: x.target.checked })} />
-          استبعاد الحروف الصعبة ({HARD_LETTERS.join(" ")})
-        </label>
+        <LetterPicker e={e} S={S} host={host} />
         <label className="mt-4 block">
           <span className="mb-1 block font-bold">تنتهي الجولة عند</span>
           <select className={input} disabled={!host} value={st.finishers ?? 0} onChange={(x) => e.updateSettings({ finishers: +x.target.value })}>
@@ -453,7 +450,20 @@ function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
   const mine = r.finishers.find((f) => f.id === e.myId);
   const inRound = r.participants.includes(e.myId);
   const locked = !!mine || busy;
-  useEffect(() => setErrors([]), [r.id]);
+  useEffect(() => {
+    setErrors([]);
+    // حرف جديد: نرجع لأعلى الصفحة ونهتز، وبعد البداية نركز على أول خانة
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      navigator.vibrate?.([200, 100, 200]);
+    } catch {}
+    const wait = Math.max(0, r.startedAt - e.now());
+    const t = setTimeout(() => {
+      window.scrollTo({ top: 0 });
+      (document.getElementById("a0") as HTMLInputElement | null)?.focus({ preventScroll: true });
+    }, wait + 50);
+    return () => clearTimeout(t);
+  }, [r.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onFinish = async () => {
     setBusy(true);
@@ -465,6 +475,7 @@ function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
 
   return (
     <>
+      <NewLetterOverlay e={e} r={r} />
       <div className={`${card} flex items-center gap-4`}>
         <LetterBadge letter={r.letter} />
         <Stopwatch e={e} r={r} frozen={mine?.elapsedMs ?? null} />
@@ -526,7 +537,7 @@ function Playing({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
               أنهيت في {fmtTime(mine.elapsedMs)} ثانية 🎉 بانتظار باقي اللاعبين…
             </div>
           ) : (
-            <button className={`${btn} w-full bg-gradient-to-l from-emerald-500 to-teal-500 py-4 text-xl text-white shadow-lg shadow-emerald-500/30`} disabled={busy} onClick={onFinish}>
+            <button id="finishBtn" className={`${btn} w-full bg-gradient-to-l from-emerald-500 to-teal-500 py-4 text-xl text-white shadow-lg shadow-emerald-500/30`} disabled={busy} onClick={onFinish}>
               {busy ? <Loader2 className="h-6 w-6 animate-spin" /> : <Flag className="h-6 w-6" />}
               {busy ? "جاري التحقق…" : "انتهيت!"}
             </button>
@@ -573,18 +584,30 @@ function CategoryField(p: {
           setMain(x.target.value);
           p.onChange("main", x.target.value);
         }}
+        enterKeyHint={p.i < CATEGORIES.length - 1 ? "next" : "done"}
         onKeyDown={(x) => {
-          if (x.key === "Enter") document.getElementById(`a${p.i + 1}`)?.focus();
+          if (x.key === "Enter") {
+            x.preventDefault();
+            focusNext(p.i);
+          }
         }}
       />
       {p.showExtra ? (
         <input
+          id={`x${p.i}`}
+          enterKeyHint="next"
+          onKeyDown={(x) => {
+            if (x.key === "Enter") {
+              x.preventDefault();
+              focusNext(p.i);
+            }
+          }}
           className={`${input} mt-2 border-dashed py-2 text-base`}
           value={extra}
           disabled={p.locked}
           autoComplete="off"
           maxLength={40}
-          placeholder="إجابة ثانية (للمتعة، بدون نقاط)"
+          placeholder="إجابة ثانية (اختيارية، ١٠ نقاط إذا فريدة)"
           onChange={(x) => {
             setExtra(x.target.value);
             p.onChange("extra", x.target.value);
@@ -593,7 +616,7 @@ function CategoryField(p: {
       ) : (
         !p.locked && (
           <button className="mt-1.5 flex items-center gap-1 text-sm font-bold text-violet-600 hover:text-violet-800" onClick={p.onShowExtra}>
-            <Plus className="h-4 w-4" /> إجابة ثانية (بدون نقاط)
+            <Plus className="h-4 w-4" /> إجابة ثانية (نقاط إضافية)
           </button>
         )
       )}
@@ -691,7 +714,25 @@ function Results({ e, S, r }: { e: Engine; S: GameState; r: RoundRecord }) {
                       <div className="min-w-0 flex-1">
                         <div className={`font-bold ${cell.valid ? "" : "text-rose-500 line-through decoration-2"}`}>{cell.main || <span className="text-slate-300 no-underline">—</span>}</div>
                         {!cell.valid && cell.main && cell.reason && !cell.overridden && <div className="text-xs text-rose-500">{cell.reason}</div>}
-                        {cell.extra && <div className="text-sm text-slate-400">الإجابة الثانية: {cell.extra} · 0</div>}
+                        {cell.extra && (
+                          <div className="mt-1 flex items-center gap-1.5 text-sm">
+                            <span className="text-slate-400">الثانية:</span>
+                            <span className={`font-bold ${cell.extraValid ? "text-slate-600" : "text-rose-400 line-through"}`}>{cell.extra}</span>
+                            <span className={`rounded px-1.5 text-xs font-black ${cell.extraPoints === 10 ? "bg-emerald-100 text-emerald-700" : cell.extraPoints === 5 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-600"}`}>
+                              {cell.extraPoints}
+                            </span>
+                            {host && (
+                              <button
+                                title={cell.extraValid ? "اعتبرها خطأ" : "اعتبرها صحيحة"}
+                                className="rounded p-0.5 text-slate-300 hover:text-slate-600"
+                                onClick={() => e.toggleOverride(pid, i, cell.extraValid, true)}
+                              >
+                                {cell.extraValid ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {cell.extra && !cell.extraValid && cell.extraReason && <div className="text-xs text-rose-400">{cell.extraReason}</div>}
                       </div>
                       {host && cell.main && (
                         <button
@@ -911,5 +952,88 @@ function Chat({ e, S }: { e: Engine; S: GameState }) {
         </div>
       )}
     </>
+  );
+}
+
+function focusNext(i: number) {
+  const next = document.getElementById(`a${i + 1}`) as HTMLInputElement | null;
+  if (next) {
+    next.focus();
+    next.scrollIntoView({ behavior: "smooth", block: "center" });
+  } else {
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.getElementById("finishBtn")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+/** تنبيه بداية حرف جديد: شاشة كاملة مع عد تنازلي */
+function NewLetterOverlay({ e, r }: { e: Engine; r: RoundRecord }) {
+  const [left, setLeft] = useState(() => r.startedAt - e.now());
+  useEffect(() => {
+    const iv = setInterval(() => setLeft(r.startedAt - e.now()), 100);
+    return () => clearInterval(iv);
+  }, [e, r]);
+  if (left < -700) return null;
+  const n = Math.ceil(left / 1000);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/85 text-white backdrop-blur-sm">
+      <div className="mb-4 text-2xl font-black text-amber-300">🔔 حرف جديد! الجولة {r.no}</div>
+      <div className="flex h-44 w-44 items-center justify-center rounded-[2.5rem] bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 text-[8rem] font-black shadow-2xl shadow-rose-500/40 animate-[pop_.6s_ease]">
+        {r.letter}
+      </div>
+      <div key={n} className="mt-6 text-6xl font-black animate-[pop_.4s_ease]">
+        {n > 0 ? n : "ابدأ! ✍️"}
+      </div>
+    </div>
+  );
+}
+
+/** اختيار الحروف المسموحة في اللعبة */
+function LetterPicker({ e, S, host }: { e: Engine; S: GameState; host: boolean }) {
+  const allowed = allowedLetters(S.settings);
+  const set = (letters: string[]) => {
+    if (!letters.length) return e.toast("لازم حرف واحد على الأقل", "error");
+    e.updateSettings({ letters });
+  };
+  const toggle = (l: string) => set(allowed.includes(l) ? allowed.filter((x) => x !== l) : [...allowed, l]);
+  const usedSet = new Set([...(S.used || [])]);
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="font-bold">الحروف في اللعبة ({allowed.length})</span>
+        {host && (
+          <div className="flex gap-1.5 text-sm">
+            <button className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold hover:bg-slate-200" onClick={() => set([...ALL_LETTERS])}>
+              الكل
+            </button>
+            <button className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold hover:bg-slate-200" onClick={() => set(ALL_LETTERS.filter((l) => !HARD_LETTERS.includes(l)))}>
+              بدون الصعبة
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 sm:grid-cols-10">
+        {ALL_LETTERS.map((l) => {
+          const on = allowed.includes(l);
+          return (
+            <button
+              key={l}
+              disabled={!host}
+              onClick={() => toggle(l)}
+              title={usedSet.has(l) ? "طلع قبل" : ""}
+              className={`relative aspect-square rounded-xl text-xl font-black transition ${
+                on ? "bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow" : "bg-slate-100 text-slate-300 line-through"
+              } ${host ? "active:scale-90" : "cursor-default"}`}
+            >
+              {l}
+              {on && usedSet.has(l) && <span className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-white/80" />}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-xs text-slate-400">
+        {host ? "اضغط على الحرف لإضافته أو حذفه." : "يحددها المضيف."} النقطة الصغيرة = حرف طلع قبل في هذي الغرفة (ما يتكرر إلا بعد ما تخلص الحروف).
+      </p>
+    </div>
   );
 }
