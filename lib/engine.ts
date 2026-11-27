@@ -285,6 +285,11 @@ export class Engine {
       this.S = d;
       this.offset = d.hostNow - Date.now();
       // إذا المضيف عدّل اسمي نحفظ الاسم الجديد حتى ما يرجع القديم عند إعادة الدخول
+      // المضيف السابق نقل التحكم لي
+      if (prevHost && prevHost !== this.myId && d.hostId === this.myId && !this.viewer) {
+        this.becomeHost("صرت أنت المضيف 👑 (نقل لك التحكم)");
+        return;
+      }
       const mine = d.players[this.myId]?.name;
       if (!this.viewer && mine && mine !== this.myName) this.setName(mine);
       if (this.joinRetry) clearTimeout(this.joinRetry);
@@ -480,6 +485,27 @@ export class Engine {
     if (!this.isHost() || !this.S || this.S.phase !== "lobby") return;
     Object.assign(this.S.settings, p);
     this.broadcast();
+  }
+
+  // ---------- نقل التحكم ----------
+  canTransfer(pid: string) {
+    const S = this.S;
+    return !!S && this.isHost() && pid !== this.myId && !!S.players[pid] && this.online.includes(pid) && S.phase !== "closing";
+  }
+  transferHost(pid: string) {
+    const S = this.S;
+    if (!S || !this.canTransfer(pid)) return;
+    S.hostId = pid;
+    S.v += 5;
+    S.hostNow = Date.now();
+    this.send({ t: "state", d: S });
+    try {
+      sessionStorage.setItem(`insan_state_${this.room}`, JSON.stringify(S));
+    } catch {}
+    this.offset = 0;
+    if (S.phase === "playing") setTimeout(() => this.sendDraft(true), 300);
+    this.toast(`نقلت التحكم إلى ${S.players[pid].name} 👑`, "success");
+    this.afterState();
   }
 
   // ---------- تعديل الاسم ----------
@@ -702,7 +728,12 @@ export class Engine {
     if (Date.now() - this.hostMissingSince < HOST_TIMEOUT_MS) return;
     const candidate = S.order.find((id) => this.online.includes(id));
     if (candidate !== this.myId) return;
-    // تسلّم دور المضيف وحوّل الأوقات لساعتي
+    this.becomeHost("أصبحت أنت المضيف 👑");
+  }
+
+  /** تسلّم دور المضيف وحوّل الأوقات لساعتي */
+  private becomeHost(msg: string) {
+    const S = this.S!;
     for (const r of S.rounds) {
       r.startedAt -= this.offset;
       r.endsAt -= this.offset;
@@ -716,7 +747,7 @@ export class Engine {
     this.finalizing = false;
     if (S.phase === "closing") this.collectUntil = Date.now() + COLLECT_MS;
     this.hostMissingSince = 0;
-    this.toast("أصبحت أنت المضيف 👑", "success");
+    this.toast(msg, "success");
     this.broadcast();
   }
 }

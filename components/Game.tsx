@@ -142,6 +142,7 @@ function PlayerChips({ e, S, scores }: { e: Engine; S: GameState; scores?: boole
   const st = scores ? Object.fromEntries(standings(S).map((x) => [x.id, x.total])) : {};
   const [edit, setEdit] = useState<string | null>(null);
   const [val, setVal] = useState("");
+  const [confirmHost, setConfirmHost] = useState<string | null>(null);
   const save = () => {
     if (edit && val.trim()) e.rename(edit, val);
     setEdit(null);
@@ -184,6 +185,23 @@ function PlayerChips({ e, S, scores }: { e: Engine; S: GameState; scores?: boole
                 className="renameBtn rounded-full p-0.5 text-violet-500 hover:bg-white"
               >
                 <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {edit !== id && e.canTransfer(id) && (
+              <button
+                type="button"
+                title="اجعله المضيف"
+                aria-label="اجعله المضيف"
+                onClick={() => {
+                  if (confirmHost === id) {
+                    e.transferHost(id);
+                    setConfirmHost(null);
+                  } else setConfirmHost(id);
+                }}
+                className={`hostBtn flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs ${confirmHost === id ? "bg-amber-500 text-white" : "text-amber-600 hover:bg-white"}`}
+              >
+                <Crown className="h-3.5 w-3.5" />
+                {confirmHost === id && "تأكيد النقل؟"}
               </button>
             )}
             {scores && <span className="mr-1 rounded-full bg-white px-2 text-sm">{st[id] ?? 0}</span>}
