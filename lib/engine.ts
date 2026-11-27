@@ -284,6 +284,9 @@ export class Engine {
       const rejoinedAsHost = !this.S && d.hostId === this.myId;
       this.S = d;
       this.offset = d.hostNow - Date.now();
+      // إذا المضيف عدّل اسمي نحفظ الاسم الجديد حتى ما يرجع القديم عند إعادة الدخول
+      const mine = d.players[this.myId]?.name;
+      if (!this.viewer && mine && mine !== this.myName) this.setName(mine);
       if (this.joinRetry) clearTimeout(this.joinRetry);
       if (rejoinedAsHost) {
         // رجع المضيف بعد تحديث الصفحة: يستلم الحالة من اللاعبين ويكمل
@@ -343,7 +346,7 @@ export class Engine {
           S.order.push(from);
           this.toast(`انضم ${name} 👋`);
         }
-      } else S.players[from].name = name;
+      } else this.applyName(from, name);
       this.broadcast();
     } else if (m.t === "draft") {
       const r = this.currentRound();
@@ -477,6 +480,29 @@ export class Engine {
     if (!this.isHost() || !this.S || this.S.phase !== "lobby") return;
     Object.assign(this.S.settings, p);
     this.broadcast();
+  }
+
+  // ---------- تعديل الاسم ----------
+  /** اللاعب يعدّل اسمه، أو المضيف يعدّل اسم أي لاعب */
+  rename(pid: string, name: string) {
+    const S = this.S;
+    const n = name.trim().slice(0, 20);
+    if (!S || this.viewer || !n || !S.players[pid]) return;
+    if (pid === this.myId) this.setName(n);
+    if (this.isHost()) {
+      this.applyName(pid, n);
+      this.broadcast();
+    } else if (pid === this.myId) this.send({ t: "hello", d: { name: n } });
+  }
+  private applyName(pid: string, name: string) {
+    const S = this.S!;
+    const old = S.players[pid]?.name;
+    if (!old || old === name) return;
+    const same = (id: string, nm: string) => id !== pid && normalize(S.players[id]?.name || "") === normalize(nm);
+    let n = name;
+    for (let k = 2; S.order.some((id) => same(id, n)); k++) n = `${name} ${k}`;
+    S.players[pid].name = n;
+    this.toast(`${old} صار اسمه ${n} ✏️`);
   }
 
   // ---------- الشات ----------

@@ -17,6 +17,7 @@ import {
   Share2,
   Sparkles,
   MessageCircle,
+  Pencil,
   Send,
   Timer,
   Tv,
@@ -139,6 +140,12 @@ function LetterBadge({ letter, size = "lg" }: { letter: string; size?: "lg" | "s
 
 function PlayerChips({ e, S, scores }: { e: Engine; S: GameState; scores?: boolean }) {
   const st = scores ? Object.fromEntries(standings(S).map((x) => [x.id, x.total])) : {};
+  const [edit, setEdit] = useState<string | null>(null);
+  const [val, setVal] = useState("");
+  const save = () => {
+    if (edit && val.trim()) e.rename(edit, val);
+    setEdit(null);
+  };
   return (
     <div className="flex flex-wrap gap-2">
       {S.order.map((id) => {
@@ -147,8 +154,38 @@ function PlayerChips({ e, S, scores }: { e: Engine; S: GameState; scores?: boole
           <span key={id} className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-bold ${on ? "bg-violet-100 text-violet-900" : "bg-slate-100 text-slate-400"}`}>
             <span className={`h-2 w-2 rounded-full ${on ? "bg-emerald-500" : "bg-slate-300"}`} />
             {id === S.hostId && <Crown className="h-4 w-4 text-amber-500" />}
-            {S.players[id]?.name}
-            {id === e.myId && <span className="text-xs font-medium opacity-60">(أنت)</span>}
+            {edit === id ? (
+              <input
+                autoFocus
+                value={val}
+                maxLength={20}
+                onChange={(ev) => setVal(ev.target.value)}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") save();
+                  if (ev.key === "Escape") setEdit(null);
+                }}
+                onBlur={save}
+                aria-label="الاسم الجديد"
+                className="w-28 rounded-full border border-violet-300 bg-white px-2 py-0.5 text-slate-900 outline-none focus:ring-2 focus:ring-violet-400"
+              />
+            ) : (
+              S.players[id]?.name
+            )}
+            {id === e.myId && edit !== id && <span className="text-xs font-medium opacity-60">(أنت)</span>}
+            {!e.viewer && edit !== id && (id === e.myId || e.isHost()) && (
+              <button
+                type="button"
+                title="تعديل الاسم"
+                aria-label="تعديل الاسم"
+                onClick={() => {
+                  setVal(S.players[id]?.name || "");
+                  setEdit(id);
+                }}
+                className="renameBtn rounded-full p-0.5 text-violet-500 hover:bg-white"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
             {scores && <span className="mr-1 rounded-full bg-white px-2 text-sm">{st[id] ?? 0}</span>}
           </span>
         );
