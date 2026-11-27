@@ -49,7 +49,7 @@ export default function Game() {
     const r = p.get("r");
     const local = p.has("local");
     if (r && p.has("screen")) e.watch(r, local);
-    else if (r && e.myName && e.savedRoom() === r) e.join(r, local);
+    else if (r && e.myName && (e.savedRoom() === r || e.lastRoom()?.room === r)) e.join(r, local);
     return () => {
       un();
     };
@@ -236,6 +236,7 @@ function Home({ e }: { e: Engine }) {
   const local = params.has("local");
   const [name, setName] = useState(e.myName);
   const [code, setCode] = useState("");
+  const last = e.lastRoom();
   const ok = () => {
     if (!name.trim()) {
       e.toast("اكتب اسمك أول ✍️", "error");
@@ -269,7 +270,12 @@ function Home({ e }: { e: Engine }) {
               <LogIn className="h-5 w-5" /> دخول الغرفة {linkRoom}
             </button>
           )}
-          <button className={`${linkRoom ? btnGhost : btnMain} w-full`} onClick={() => ok() && e.create(local)}>
+          {!linkRoom && last && (
+            <button className={`${btnMain} w-full`} onClick={() => joinCode(last.room)}>
+              <RotateCcw className="h-5 w-5" /> ارجع لغرفتك {last.room}
+            </button>
+          )}
+          <button className={`${linkRoom || last ? btnGhost : btnMain} w-full`} onClick={() => ok() && e.create(local)}>
             <Sparkles className="h-5 w-5" /> إنشاء غرفة جديدة
           </button>
         </div>
@@ -320,8 +326,18 @@ function Joining({ e }: { e: Engine }) {
           <>
             <XCircle className="mx-auto mb-3 h-12 w-12 text-rose-500" />
             <h2 className="text-xl font-black">ما لقينا الغرفة {e.room}</h2>
-            <p className="mt-2 text-slate-500">تأكد من الرمز، أو إن صاحب الغرفة فاتح الصفحة.</p>
-            <div className="mt-5 flex justify-center gap-2">
+            <p className="mt-2 text-slate-500">تأكد من الرمز، أو إن صاحب الغرفة فاتح الصفحة. وتقدر تفتحها من جديد بنفس الرمز وتكون أنت المضيف.</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <button
+                className={`${btn} bg-emerald-500 text-white`}
+                onClick={() => {
+                  const c = e.room!, l = e.local;
+                  e.leave();
+                  e.create(l, c);
+                }}
+              >
+                <Sparkles className="h-5 w-5" /> افتح الغرفة {e.room} من جديد
+              </button>
               <button className={btnMain} onClick={() => e.join(e.room!, e.local)}>
                 <RotateCcw className="h-5 w-5" /> حاول مرة ثانية
               </button>

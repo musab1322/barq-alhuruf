@@ -48,6 +48,7 @@ export class Engine {
   private collectUntil = 0;
   private finalizing = false;
   private hostMissingSince = 0;
+  private pendingRestore: GameState | null = null;
   private offlineSince: Record<string, number> = {};
   private draftTimer: ReturnType<typeof setTimeout> | null = null;
   private loop: ReturnType<typeof setInterval> | null = null;
@@ -135,6 +136,7 @@ export class Engine {
     try {
       sessionStorage.setItem(`insan_state_${this.room}`, JSON.stringify(this.S));
     } catch {}
+    this.remember();
     this.afterState();
   }
 
@@ -147,10 +149,10 @@ export class Engine {
     } catch {}
   }
 
-  create(local: boolean) {
-    const code = String(Math.floor(10000 + Math.random() * 90000));
+  create(local: boolean, withCode?: string) {
+    const code = withCode || String(Math.floor(10000 + Math.random() * 90000));
     this.S = {
-      v: 1,
+      v: Date.now(),
       hostId: this.myId,
       hostNow: Date.now(),
       phase: "lobby",
@@ -171,14 +173,8 @@ export class Engine {
     // كنت المضيف وحدّثت الصفحة: نسترجع حالة الغرفة المحفوظة ونكمل
     try {
       const saved = JSON.parse(sessionStorage.getItem(`insan_state_${code}`) || "null") as GameState | null;
-      if (saved && saved.hostId === this.myId) {
-        this.S = saved;
-        this.offset = 0;
-        if (saved.phase === "closing") this.collectUntil = Date.now() + COLLECT_MS;
-        this.open(code, local, true);
-        setTimeout(() => this.send({ t: "drafts" }), 600);
-        return;
-      }
+      // نسأل الغرفة أول: إذا فيها مضيف بنسخة أحدث ندخل كلاعب، وإلا نكمل كمضيف بالنسخة المحفوظة
+      if (saved && saved.hostId === this.myId) this.pendingRestore = saved;
     } catch {}
     this.open(code, local, false);
   }
@@ -225,6 +221,16 @@ export class Engine {
             let tries = 0;
             const retry = () => {
               if (this.S) return;
+              if (this.pendingRestore) {
+                const saved = this.pendingRestore;
+                this.pendingRestore = null;
+                this.S = saved;
+                this.offset = 0;
+                if (saved.phase === "closing") this.collectUntil = Date.now() + COLLECT_MS;
+                this.broadcast();
+                setTimeout(() => this.send({ t: "drafts" }), 300);
+                return;
+              }
               if (++tries > 4) {
                 this.joinFailed = true;
                 this.changed();
@@ -233,7 +239,7 @@ export class Engine {
               this.hello();
               this.joinRetry = setTimeout(retry, 2500);
             };
-            this.joinRetry = setTimeout(retry, 2500);
+            this.joinRetry = setTimeout(retry, this.pendingRestore ? 1800 : 2500);
           }
         },
         onReconnect: () => {
@@ -255,7 +261,30 @@ export class Engine {
 
   private hello() {
     if (this.viewer) this.send({ t: "sync" });
-    else this.send({ t: "hello", d: { name: this.myName } });
+    else {
+      // المعرّف القديم لهذا الجهاز في هذه الغرفة (لو انقفل المتصفح وانفتح من جديد)
+      let prev: string | undefined;
+      try {
+        const m = JSON.parse(localStorage.getItem("insan_last") || "null");
+        if (m && m.room === this.room && m.id !== this.myId && Date.now() - m.at < 12 * 3600e3) prev = m.id;
+      } catch {}
+      this.send({ t: "hello", d: { name: this.myName, prev } });
+    }
+  }
+
+  /** نحفظ على هذا الجهاز آخر غرفة ومعرّفي فيها (يبقى بعد إغلاق المتصفح) */
+  private remember() {
+    try {
+      localStorage.setItem("insan_last", JSON.stringify({ room: this.room, id: this.myId, at: Date.now(), host: this.isHost() }));
+    } catch {}
+  }
+  /** آخر غرفة لعبت فيها على هذا الجهاز */
+  lastRoom(): { room: string; host: boolean } | null {
+    try {
+      const m = JSON.parse(localStorage.getItem("insan_last") || "null");
+      if (m && m.room && Date.now() - m.at < 7 * 24 * 3600e3) return { room: m.room, host: !!m.host };
+    } catch {}
+    return null;
   }
 
   leave() {
@@ -277,20 +306,27 @@ export class Engine {
   private onMsg(m: Msg, from: string) {
     if (m.t === "state") {
       const d = m.d;
-      if (this.S && !(d.v > this.S.v || d.hostId !== this.S.hostId)) return;
-      if (this.S && this.isHost() && d.hostId !== this.myId && d.v < this.S.v) return;
+      // نقبل فقط النسخة الأحدث (رقم إصدار أكبر، وعند التساوي نرجّح بمعرّف المضيف)
+      // حتى ما ترجع الشاشة لحالة قديمة إذا ظهر مضيف ثاني بنسخة قديمة
+      if (this.S && !(d.v > this.S.v || (d.v === this.S.v && d.hostId > this.S.hostId))) {
+        // أنا المضيف ووصلتني نسخة أقدم من مضيف ثاني: أعيد إرسال نسختي حتى يتنحى
+        if (this.isHost() && d.hostId !== this.myId) this.broadcast();
+        return;
+      }
+      this.pendingRestore = null;
       const prevHost = this.S?.hostId;
       const wasIn = !!this.S?.players[this.myId];
       const rejoinedAsHost = !this.S && d.hostId === this.myId;
       this.S = d;
       this.offset = d.hostNow - Date.now();
-      // إذا المضيف عدّل اسمي نحفظ الاسم الجديد حتى ما يرجع القديم عند إعادة الدخول
       // المضيف السابق نقل التحكم لي
       if (prevHost && prevHost !== this.myId && d.hostId === this.myId && !this.viewer) {
         this.becomeHost("صرت أنت المضيف 👑 (نقل لك التحكم)");
         return;
       }
+      // إذا المضيف عدّل اسمي نحفظ الاسم الجديد حتى ما يرجع القديم عند إعادة الدخول
       const mine = d.players[this.myId]?.name;
+      if (!this.viewer && d.players[this.myId]) this.remember();
       if (!this.viewer && mine && mine !== this.myName) this.setName(mine);
       if (this.joinRetry) clearTimeout(this.joinRetry);
       if (rejoinedAsHost) {
@@ -338,7 +374,12 @@ export class Engine {
       this.broadcast();
     } else if (m.t === "hello") {
       let name = String(m.d?.name || "لاعب").trim().slice(0, 20) || "لاعب";
-      if (!S.players[from]) {
+      const prev = typeof m.d?.prev === "string" ? m.d.prev : "";
+      if (!S.players[from] && prev && S.players[prev] && prev !== this.myId && !this.online.includes(prev)) {
+        // نفس الجهاز رجع بعد إغلاق المتصفح: نرجّع له لاعبه ونقاطه
+        this.reassign(prev, from);
+        this.toast(`رجع ${(S.players as Record<string, { name: string }>)[from]?.name || name} 🔄`);
+      } else if (!S.players[from]) {
         const same = (id: string) => normalize(S.players[id]?.name || "") === normalize(name);
         // نفس الاسم وصاحبه غير متصل = نفس اللاعب دخل من جهاز آخر: نسترجع لاعبه ونقاطه
         const old = S.order.find((id) => id !== from && id !== this.myId && same(id) && !this.online.includes(id));
@@ -378,6 +419,7 @@ export class Engine {
       r.finishers = r.finishers.map((f) => (f.id === oldId ? { ...f, id: newId } : f));
       mv(r.answers);
       mv(r.checks);
+      if (r.checksX) mv(r.checksX);
       for (const k of Object.keys(r.overrides)) {
         if (k.startsWith(oldId + "|")) {
           r.overrides[newId + k.slice(oldId.length)] = r.overrides[k];

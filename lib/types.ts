@@ -55,7 +55,7 @@ export interface GameState {
 
 export type Msg =
   | { t: "state"; d: GameState }
-  | { t: "hello"; d: { name: string } }
+  | { t: "hello"; d: { name: string; prev?: string } }
   | { t: "finish"; d: { round: number; elapsedMs: number; main: string[]; extra: string[] } }
   | { t: "draft"; d: { round: number; main: string[]; extra: string[] } }
   | { t: "sync" }
