@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { ALL_LETTERS, CATEGORIES, HARD_LETTERS } from "@/lib/arabic";
-import { allowedLetters, Engine } from "@/lib/engine";
+import { allowedLetters, cleanRoom, Engine, isNamedRoom } from "@/lib/engine";
 import { finishRuleText, fmtTime, scoreRound, standings } from "@/lib/scoring";
 import { sounds } from "@/lib/sound";
 import type { GameState, RoundRecord } from "@/lib/types";
@@ -49,7 +49,7 @@ export default function Game() {
     const r = p.get("r");
     const local = p.has("local");
     if (r && p.has("screen")) e.watch(r, local);
-    else if (r && e.myName && (e.savedRoom() === r || e.lastRoom()?.room === r)) e.join(r, local);
+    else if (r && e.myName && (e.savedRoom() === r || e.recentRooms().includes(r))) e.join(r, local, isNamedRoom(r));
     return () => {
       un();
     };
@@ -236,7 +236,15 @@ function Home({ e }: { e: Engine }) {
   const local = params.has("local");
   const [name, setName] = useState(e.myName);
   const [code, setCode] = useState("");
-  const last = e.lastRoom();
+  const recent = e.recentRooms();
+  const [roomName, setRoomName] = useState("");
+  const joinNamed = (c: string) => {
+    const clean = cleanRoom(c);
+    if (clean.length < 2) return e.toast("اكتب اسم الغرفة، مثلاً: العائلة", "error");
+    if (/^\d+$/.test(clean)) return joinCode(clean);
+    if (ok()) e.join(clean, local, true);
+  };
+  const enter = (r: string) => (isNamedRoom(r) ? joinNamed(r) : joinCode(r));
   const ok = () => {
     if (!name.trim()) {
       e.toast("اكتب اسمك أول ✍️", "error");
@@ -262,20 +270,21 @@ function Home({ e }: { e: Engine }) {
           maxLength={20}
           placeholder="اكتب اسمك"
           onChange={(x) => setName(x.target.value)}
-          onKeyDown={(x) => x.key === "Enter" && (linkRoom ? joinCode(linkRoom) : ok() && e.create(local))}
+          onKeyDown={(x) => x.key === "Enter" && (linkRoom ? enter(linkRoom) : ok() && e.create(local))}
         />
         <div className="mt-5 space-y-3">
           {linkRoom && (
-            <button className={`${btnMain} w-full`} onClick={() => joinCode(linkRoom)}>
+            <button className={`${btnMain} w-full`} onClick={() => enter(linkRoom)}>
               <LogIn className="h-5 w-5" /> دخول الغرفة {linkRoom}
             </button>
           )}
-          {!linkRoom && last && (
-            <button className={`${btnMain} w-full`} onClick={() => joinCode(last.room)}>
-              <RotateCcw className="h-5 w-5" /> ارجع لغرفتك {last.room}
-            </button>
-          )}
-          <button className={`${linkRoom || last ? btnGhost : btnMain} w-full`} onClick={() => ok() && e.create(local)}>
+          {!linkRoom &&
+            recent.map((r, i) => (
+              <button key={r} className={`${i === 0 ? btnMain : btnGhost} w-full`} onClick={() => enter(r)}>
+                <RotateCcw className="h-5 w-5" /> ارجع لغرفة {isNamedRoom(r) ? `«${r}»` : r}
+              </button>
+            ))}
+          <button className={`${linkRoom || recent.length ? btnGhost : btnMain} w-full`} onClick={() => ok() && e.create(local)}>
             <Sparkles className="h-5 w-5" /> إنشاء غرفة جديدة
           </button>
         </div>
@@ -299,6 +308,23 @@ function Home({ e }: { e: Engine }) {
                 دخول
               </button>
             </div>
+            <div className="my-5 flex items-center gap-3 text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" /> أو غرفة دائمة باسم <div className="h-px flex-1 bg-slate-200" />
+            </div>
+            <div className="flex gap-2">
+              <input
+                className={input}
+                maxLength={24}
+                placeholder="مثلاً: العائلة"
+                value={roomName}
+                onChange={(x) => setRoomName(x.target.value)}
+                onKeyDown={(x) => x.key === "Enter" && joinNamed(roomName)}
+              />
+              <button className={`${btn} bg-violet-600 text-white`} onClick={() => joinNamed(roomName)}>
+                ادخل
+              </button>
+            </div>
+            <p className="mt-2 text-sm text-slate-500">كلكم تدخلون بنفس الاسم كل مرة. أول واحد يدخل يصير المضيف، ويقدر ينقل التحكم لغيره.</p>
           </>
         )}
       </div>
@@ -375,7 +401,7 @@ function Lobby({ e, S }: { e: Engine; S: GameState }) {
       <Logo small />
       <div className={card}>
         <p className="text-center text-slate-500">رمز الغرفة</p>
-        <div dir="ltr" className="my-2 rounded-2xl bg-gradient-to-l from-violet-100 to-orange-100 py-3 text-center text-5xl font-black tracking-[.3em] text-violet-900">
+        <div dir="auto" className={`my-2 rounded-2xl bg-gradient-to-l from-violet-100 to-orange-100 py-3 text-center font-black text-violet-900 ${isNamedRoom(e.room) ? "text-4xl" : "text-5xl tracking-[.3em]"}`}>
           {e.room}
         </div>
         <div className="mt-3 flex flex-wrap gap-2">

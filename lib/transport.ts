@@ -30,7 +30,7 @@ export function connect(room: string, myId: string, h: Handlers, local: boolean)
   if (local) return localTransport(room, myId, h);
 
   const client = createClient(SUPABASE_URL, SUPABASE_KEY, { realtime: { params: { eventsPerSecond: 30 } } });
-  const ch: RealtimeChannel = client.channel(`insan-${room}`, {
+  const ch: RealtimeChannel = client.channel(`insan-${encodeURIComponent(room)}`, {
     config: { broadcast: { self: false, ack: false }, presence: { key: myId } },
   });
   ch.on("broadcast", { event: "m" }, ({ payload }) => {

@@ -42,6 +42,7 @@ export interface Settings {
 
 export interface GameState {
   v: number;
+  term?: number; // دورة المضيف: تزيد عند كل تسليم للتحكم، والأعلى يغلب
   hostId: string;
   hostNow: number;
   phase: Phase;

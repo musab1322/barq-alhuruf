@@ -70,8 +70,8 @@ function TopBar({ e }: { e: Engine }) {
       <div className="flex items-center gap-4 rounded-3xl bg-white/10 p-3 pl-5 backdrop-blur">
         {qr && <img src={qr} alt="رمز الدخول" className="h-24 w-24 rounded-xl lg:h-28 lg:w-28" />}
         <div>
-          <div className="text-lg text-white/70">ادخل اللعبة برمز</div>
-          <div dir="ltr" className="text-5xl font-black tracking-[.2em] text-amber-300">
+          <div className="text-lg text-white/70">ادخل اللعبة بغرفة</div>
+          <div dir="auto" className={`text-5xl font-black text-amber-300 ${/^\d{5}$/.test(e.room || "") ? "tracking-[.2em]" : ""}`}>
             {e.room}
           </div>
           <div dir="ltr" className="text-sm text-white/60">

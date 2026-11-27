@@ -17,7 +17,7 @@ import type { Check, GameState, Msg, RoundRecord, Settings } from "./types";
  */
 
 const COLLECT_MS = 2000;
-const HOST_TIMEOUT_MS = 4000;
+const HOST_TIMEOUT_MS = 9000; // مهلة كافية لتحديث صفحة المضيف على الجوال قبل ما يتسلّم غيره
 
 type Listener = () => void;
 export type Toast = { id: number; text: string; kind?: "info" | "success" | "error" };
@@ -49,6 +49,8 @@ export class Engine {
   private finalizing = false;
   private hostMissingSince = 0;
   private pendingRestore: GameState | null = null;
+  private lastCorrect = 0;
+  private autoCreate = false;
   private offlineSince: Record<string, number> = {};
   private draftTimer: ReturnType<typeof setTimeout> | null = null;
   private loop: ReturnType<typeof setInterval> | null = null;
@@ -152,7 +154,8 @@ export class Engine {
   create(local: boolean, withCode?: string) {
     const code = withCode || String(Math.floor(10000 + Math.random() * 90000));
     this.S = {
-      v: Date.now(),
+      v: 1,
+      term: Date.now(),
       hostId: this.myId,
       hostNow: Date.now(),
       phase: "lobby",
@@ -166,7 +169,8 @@ export class Engine {
     this.open(code, local, true);
   }
 
-  join(code: string, local: boolean) {
+  join(code: string, local: boolean, autoCreate = false) {
+    this.autoCreate = autoCreate;
     this.S = null;
     this.joinFailed = false;
     this.kicked = false;
@@ -231,6 +235,14 @@ export class Engine {
                 setTimeout(() => this.send({ t: "drafts" }), 300);
                 return;
               }
+              // غرفة بالاسم وما فيها أحد: أنت أول واحد، تفتحها وتصير المضيف
+              if (this.autoCreate && tries >= 1) {
+                this.net?.close();
+                this.net = null;
+                this.create(this.local, this.room!);
+                this.toast("فتحت الغرفة وصرت أنت المضيف 👑", "success");
+                return;
+              }
               if (++tries > 4) {
                 this.joinFailed = true;
                 this.changed();
@@ -263,28 +275,32 @@ export class Engine {
     if (this.viewer) this.send({ t: "sync" });
     else {
       // المعرّف القديم لهذا الجهاز في هذه الغرفة (لو انقفل المتصفح وانفتح من جديد)
-      let prev: string | undefined;
-      try {
-        const m = JSON.parse(localStorage.getItem("insan_last") || "null");
-        if (m && m.room === this.room && m.id !== this.myId && Date.now() - m.at < 12 * 3600e3) prev = m.id;
-      } catch {}
+      const m = this.room ? readRooms()[this.room] : undefined;
+      const prev = m && m.id !== this.myId ? m.id : undefined;
       this.send({ t: "hello", d: { name: this.myName, prev } });
     }
   }
 
   /** نحفظ على هذا الجهاز آخر غرفة ومعرّفي فيها (يبقى بعد إغلاق المتصفح) */
   private remember() {
+    if (!this.room || this.viewer) return;
+    const all = readRooms();
+    const cur = all[this.room];
+    if (cur && cur.id === this.myId && Date.now() - cur.at < 60e3) return; // لا نكتب كل ثانية
+    all[this.room] = { id: this.myId, at: Date.now() };
+    const keep = Object.entries(all)
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, 8);
     try {
-      localStorage.setItem("insan_last", JSON.stringify({ room: this.room, id: this.myId, at: Date.now(), host: this.isHost() }));
+      localStorage.setItem("insan_rooms", JSON.stringify(Object.fromEntries(keep)));
     } catch {}
   }
-  /** آخر غرفة لعبت فيها على هذا الجهاز */
-  lastRoom(): { room: string; host: boolean } | null {
-    try {
-      const m = JSON.parse(localStorage.getItem("insan_last") || "null");
-      if (m && m.room && Date.now() - m.at < 7 * 24 * 3600e3) return { room: m.room, host: !!m.host };
-    } catch {}
-    return null;
+  /** الغرف اللي لعبت فيها على هذا الجهاز (الأحدث أولاً) */
+  recentRooms(): string[] {
+    return Object.entries(readRooms())
+      .sort((a, b) => b[1].at - a[1].at)
+      .map(([r]) => r)
+      .slice(0, 3);
   }
 
   leave() {
@@ -306,11 +322,17 @@ export class Engine {
   private onMsg(m: Msg, from: string) {
     if (m.t === "state") {
       const d = m.d;
-      // نقبل فقط النسخة الأحدث (رقم إصدار أكبر، وعند التساوي نرجّح بمعرّف المضيف)
-      // حتى ما ترجع الشاشة لحالة قديمة إذا ظهر مضيف ثاني بنسخة قديمة
-      if (this.S && !(d.v > this.S.v || (d.v === this.S.v && d.hostId > this.S.hostId))) {
-        // أنا المضيف ووصلتني نسخة أقدم من مضيف ثاني: أعيد إرسال نسختي حتى يتنحى
-        if (this.isHost() && d.hostId !== this.myId) this.broadcast();
+      // نقبل فقط النسخة الأحدث حتى ما ترجع الشاشة لحالة قديمة إذا ظهر مضيف ثاني بنسخة قديمة
+      if (this.S && !isNewer(d, this.S)) {
+        if (d.hostId !== this.S.hostId) {
+          // أنا المضيف ووصلتني نسخة من مضيف قديم: أعيد إرسال نسختي حتى يتنحى
+          if (this.isHost()) this.broadcast();
+          // أنا لاعب: أرسل للمضيف القديم النسخة الأحدث اللي عندي حتى يلحق باللعبة الحالية
+          else if (!this.viewer && Date.now() - this.lastCorrect > 2000) {
+            this.lastCorrect = Date.now();
+            this.send({ t: "state", d: this.S });
+          }
+        }
         return;
       }
       this.pendingRestore = null;
@@ -538,6 +560,7 @@ export class Engine {
     const S = this.S;
     if (!S || !this.canTransfer(pid)) return;
     S.hostId = pid;
+    S.term = (S.term || 0) + 1;
     S.v += 5;
     S.hostNow = Date.now();
     this.send({ t: "state", d: S });
@@ -783,6 +806,7 @@ export class Engine {
     }
     this.offset = 0;
     S.hostId = this.myId;
+    S.term = (S.term || 0) + 1;
     S.v += 5;
     this.collected = {};
     this.finishPayload = {};
@@ -819,3 +843,36 @@ export function allowedLetters(st: Settings): string[] {
   if (chosen.length) return ALL_LETTERS.filter((l) => chosen.includes(l));
   return ALL_LETTERS.filter((l) => !(st.hardOff && HARD_LETTERS.includes(l)));
 }
+
+/** هل النسخة d أحدث من cur؟ نقارن أولاً بدورة المضيف (تزيد عند كل نقل للتحكم)، ثم برقم الإصدار */
+function isNewer(d: GameState, cur: GameState): boolean {
+  const ta = d.term || 0;
+  const tb = cur.term || 0;
+  if (ta !== tb) return ta > tb;
+  if (d.hostId !== cur.hostId) return d.hostId > cur.hostId;
+  return d.v > cur.v;
+}
+
+function readRooms(): Record<string, { id: string; at: number }> {
+  try {
+    const all = JSON.parse(localStorage.getItem("insan_rooms") || "{}") || {};
+    const now = Date.now();
+    for (const k of Object.keys(all)) if (!all[k]?.id || now - all[k].at > 60 * 24 * 3600e3) delete all[k];
+    return all;
+  } catch {
+    return {};
+  }
+}
+
+/** تنظيف رمز الغرفة: أرقام، أو اسم مثل «العائلة» */
+export function cleanRoom(c: string): string {
+  const digits = c.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  if (/^\s*\d+\s*$/.test(digits)) return digits.replace(/\D/g, "");
+  return c
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[^\p{L}\p{N} _-]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 24);
+}
+export const isNamedRoom = (r: string | null | undefined) => !!r && !/^\d{5}$/.test(r);
